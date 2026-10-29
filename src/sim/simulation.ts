@@ -133,6 +133,9 @@ function expandTerritories(world: World): void {
         const i = y * w + x;
         if (owner[i] !== -1) continue;
         if (!IS_LAND[terrain[i]]) continue;
+        // 边缘掺入确定性噪声，避免领土长成整齐的圆
+        const nz = (((x * 73856093) ^ (y * 19349663)) >>> 0) % 100;
+        if (nz < 14) continue;
         owner[i] = s.id;
       }
     }
