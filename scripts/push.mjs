@@ -24,6 +24,7 @@ const INCLUDE_DIRS = ['src', 'scripts', '.github'];
 const INCLUDE_FILES = [
   'index.html',
   'package.json',
+  'package-lock.json',
   'tsconfig.json',
   'vite.config.ts',
   'README.md',
