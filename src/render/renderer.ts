@@ -19,90 +19,144 @@ const FIRE_RGB: [number, number, number] = [252, 140, 44];
 const FIRE_HOT_RGB: [number, number, number] = [255, 240, 170];
 const PLAGUE_RGB: [number, number, number] = [146, 62, 154];
 
-const TILE_HI = 4;
-const TILE_LO = 1;
+/**
+ * 缩放档位。必须是「每格细节像素数」的整数倍，否则像素会被非整数比例拉伸而发糊。
+ * 4/8/16/24/32 用 8×8 细节，12/20 用 4×4 细节，1-3 用 1 像素。
+ */
+const ZOOM_STEPS = [1, 2, 3, 4, 8, 12, 16, 20, 24, 32];
+const ZOOM_MAX = 32;
 
-/** 确定性噪声：同一个坐标永远返回同一个值，不会逐帧闪烁 */
+/** 8×8 的地块图案：. 正常 / o 亮 / O 最亮 / x 暗 / s 深色（树干） */
+const PATTERN: Record<number, string[]> = {
+  [T.Grass]: [
+    '........',
+    '..o....o',
+    '.....o..',
+    '.o......',
+    '....o...',
+    '..o...o.',
+    '.......x',
+    '...o....',
+  ],
+  [T.Forest]: [
+    '...xx...',
+    '..oooo..',
+    '.ooOOoo.',
+    '.oOOOOo.',
+    '.ooOOoo.',
+    '..oooo..',
+    '...ss...',
+    '...ss...',
+  ],
+  [T.Water]: [
+    '........',
+    '.oo..oo.',
+    '........',
+    '..oo..oo',
+    '........',
+    'oo..oo..',
+    '........',
+    '..oo..oo',
+  ],
+  [T.Deep]: [
+    '........',
+    '........',
+    '...x....',
+    '........',
+    '.......o',
+    '........',
+    '..x.....',
+    '........',
+  ],
+  [T.Sand]: [
+    '........',
+    '..o.....',
+    '.....o..',
+    '........',
+    '.o....x.',
+    '........',
+    '...o....',
+    '.......o',
+  ],
+  [T.Hill]: [
+    '..oooo..',
+    '.ooOOoo.',
+    '.oOOOOo.',
+    '.ooOOoo.',
+    '..oooo..',
+    '........',
+    '..x..x..',
+    '........',
+  ],
+  [T.Mountain]: [
+    '...OO...',
+    '..OOO...',
+    '..OOo...',
+    '.OOoo...',
+    '.Oooo.x.',
+    'OOoooo..',
+    'Oooooo..',
+    'ooooooox',
+  ],
+  [T.Snow]: [
+    '........',
+    '.....o..',
+    '..o.....',
+    '........',
+    '.......o',
+    '.o......',
+    '........',
+    '..o.....',
+  ],
+  [T.Swamp]: [
+    '........',
+    '..xx....',
+    '.xxo....',
+    '..xx....',
+    '.....xx.',
+    '....xxo.',
+    '........',
+    '...o....',
+  ],
+  [T.Ruin]: [
+    '..x..x..',
+    '.x..x...',
+    '........',
+    'x..xx..x',
+    '........',
+    '..x..x..',
+    '.x......',
+    '.....x..',
+  ],
+};
+
+const SHADE_OF: Record<string, number> = {
+  '.': 1.0,
+  o: 1.2,
+  O: 1.36,
+  x: 0.76,
+  s: 0.46,
+};
+
+/** 确定性噪声：同一坐标永远同一个值，不会逐帧闪烁 */
 function hash2(x: number, y: number): number {
   let h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263);
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-/**
- * 单个格子里每个细节像素的亮度乘数。
- * 这是在 4×4 的尺度上"画"一块地：草有草点、树有树冠和树干、山有山脊、水有波光。
- */
-function tileShade(t: number, px: number, py: number, n: number): number {
-  switch (t) {
-    case T.Grass: {
-      // 草丛：底色 + 随机深点，偶尔一点亮黄（小花）
-      if (n > 0.93) return 1.18;
-      return 0.94 + n * 0.13;
-    }
-    case T.Forest: {
-      // 一棵树：中间一团亮树冠，四周压暗当背景，底下一根深色树干
-      if (py === 0) return (px === 1 || px === 2) ? 1.24 : 0.78;
-      if (py === 1) return (px === 0 || px === 3) ? 0.7 : 1.32;
-      if (py === 2) return (px === 0 || px === 3) ? 0.68 : 1.06;
-      // py === 3
-      return (px === 1 || px === 2) ? 0.44 : 0.6;
-    }
-    case T.Water: {
-      // 水：横向波光
-      if (py === 1 && n > 0.62) return 1.22;
-      if (py === 3 && n > 0.78) return 1.12;
-      return 0.94 + n * 0.1;
-    }
-    case T.Deep: {
-      if (n > 0.9) return 1.18;
-      return 0.96 + n * 0.07;
-    }
-    case T.Sand: {
-      if (n > 0.9) return 1.1;
-      return 0.95 + n * 0.11;
-    }
-    case T.Hill: {
-      // 丘陵：上半受光、下半背光，形成圆丘感
-      const base = py <= 1 ? 1.08 : 0.92;
-      return base * (0.95 + n * 0.1);
-    }
-    case T.Mountain: {
-      // 山：一道斜向山脊 + 背光面
-      if (px === py) return 1.24;
-      if (px === py + 1) return 1.05;
-      if (px < py) return 0.82;
-      return 0.9 + n * 0.08;
-    }
-    case T.Snow: {
-      if (n > 0.94) return 1.04;
-      return 0.97 + n * 0.05;
-    }
-    case T.Swamp: {
-      // 沼泽：暗底 + 积水反光 + 苔点
-      if (n > 0.86) return 1.3;
-      if (py === 2 && (px === 1 || px === 2)) return 0.74;
-      return 0.9 + n * 0.12;
-    }
-    case T.Ruin: {
-      if (n > 0.72) return 0.72;
-      return 0.9 + n * 0.16;
-    }
-    default:
-      return 1;
-  }
-}
-
 export interface Camera {
-  /** 视野中心的世界坐标 */
   x: number;
   y: number;
-  /** 每格多少 CSS 像素（始终为整数，保证像素清晰） */
   zoom: number;
 }
 
-const ZOOM_MIN = 1;
-const ZOOM_MAX = 24;
+interface Region {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
 
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
@@ -112,8 +166,11 @@ export class Renderer {
   private img!: ImageData;
   private buf!: Uint32Array;
   private dpr = 1;
-  /** 离屏画布里一格占多少像素：远景 1，近景 4 */
-  private tile = TILE_LO;
+  /** 离屏画布里一格占多少像素：1 / 4 / 8 */
+  private tile = 1;
+  private painted: Region = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** 相机动过就需要重画可见区域 */
+  private camDirty = true;
   cssW = 1;
   cssH = 1;
 
@@ -140,14 +197,15 @@ export class Renderer {
     if (!offCtx) throw new Error('离屏 Canvas 不可用');
     this.offCtx = offCtx;
 
-    this.allocation(world);
     this.resize();
     this.fit(world);
+    this.allocate(world);
     window.addEventListener('resize', () => this.resize());
   }
 
-  private allocation(world: World): void {
-    const t = this.cam.zoom >= 4 ? TILE_HI : TILE_LO;
+  /** 按当前缩放决定离屏画布的细节密度，并重建缓冲 */
+  private allocate(world: World): void {
+    const t = pickTile(this.cam.zoom);
     const W = world.w * t;
     const H = world.h * t;
     this.tile = t;
@@ -156,12 +214,13 @@ export class Renderer {
     this.img = this.offCtx.createImageData(W, H);
     this.buf = new Uint32Array(this.img.data.buffer);
     this.dirty = true;
+    this.camDirty = true;
   }
 
   attachWorld(world: World): void {
     this.tintCache.clear();
-    this.allocation(world);
     this.fit(world);
+    this.allocate(world);
   }
 
   resize(): void {
@@ -171,23 +230,14 @@ export class Renderer {
     this.cssH = Math.max(240, Math.floor(r.height));
     this.canvas.width = Math.floor(this.cssW * this.dpr);
     this.canvas.height = Math.floor(this.cssH * this.dpr);
-  }
-
-  /**
-   * 缩放吸附：让 zoom 永远是「每格细节像素数」的整数倍，
-   * 否则 4×4 的细节会被 3.5 倍这种非整数比例拉伸，整张图发糊、出重影。
-   */
-  private snapZoom(z: number): number {
-    if (z < 4) return Math.max(ZOOM_MIN, Math.min(3, Math.round(z)));
-    const snapped = Math.round(z / TILE_HI) * TILE_HI;
-    return Math.max(TILE_HI, Math.min(ZOOM_MAX, snapped));
+    this.camDirty = true;
   }
 
   fit(world: World): void {
     const raw = Math.min(this.cssW / world.w, this.cssH / world.h) * 0.99;
-    // 向下吸附，保证整张地图都在视野里
-    const base = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.floor(raw)));
-    this.cam.zoom = base >= 4 ? Math.max(4, Math.floor(base / TILE_HI) * TILE_HI) : base;
+    let z = 1;
+    for (const s of ZOOM_STEPS) if (s <= raw) z = s;
+    this.cam.zoom = z;
     this.cam.x = world.w / 2;
     this.cam.y = world.h / 2;
   }
@@ -213,45 +263,86 @@ export class Renderer {
   pan(dxScreen: number, dyScreen: number): void {
     this.cam.x -= dxScreen / this.cam.zoom;
     this.cam.y -= dyScreen / this.cam.zoom;
+    this.camDirty = true;
   }
 
   clampCam(world: World): void {
     const halfW = this.cssW / 2 / this.cam.zoom;
     const halfH = this.cssH / 2 / this.cam.zoom;
-    if (world.w * this.cam.zoom <= this.cssW) this.cam.x = world.w / 2;
-    else this.cam.x = Math.max(halfW * 0.4, Math.min(world.w - halfW * 0.4, this.cam.x));
-    if (world.h * this.cam.zoom <= this.cssH) this.cam.y = world.h / 2;
-    else this.cam.y = Math.max(halfH * 0.4, Math.min(world.h - halfH * 0.4, this.cam.y));
+    const nx = world.w * this.cam.zoom <= this.cssW
+      ? world.w / 2
+      : Math.max(halfW * 0.4, Math.min(world.w - halfW * 0.4, this.cam.x));
+    const ny = world.h * this.cam.zoom <= this.cssH
+      ? world.h / 2
+      : Math.max(halfH * 0.4, Math.min(world.h - halfH * 0.4, this.cam.y));
+    if (nx !== this.cam.x || ny !== this.cam.y) {
+      this.cam.x = nx;
+      this.cam.y = ny;
+      this.camDirty = true;
+    }
   }
 
+  /** 按档位缩放。factor 只用来判断方向（>1 放大，<1 缩小） */
   zoomAt(sx: number, sy: number, factor: number): void {
+    const dir = factor > 1 ? 1 : -1;
+    const cur = this.cam.zoom;
+    let i = ZOOM_STEPS.indexOf(cur);
+    if (i < 0) {
+      i = 0;
+      let bestD = Infinity;
+      for (let k = 0; k < ZOOM_STEPS.length; k++) {
+        const d = Math.abs(ZOOM_STEPS[k] - cur);
+        if (d < bestD) { bestD = d; i = k; }
+      }
+    }
+    const ni = Math.max(0, Math.min(ZOOM_STEPS.length - 1, i + dir));
+    if (ni === i) return;
+
     const [wx, wy] = this.screenToWorld(sx, sy);
-    const nz = this.snapZoom(this.cam.zoom * factor);
-    if (nz === this.cam.zoom) return;
-    this.cam.zoom = nz;
+    this.cam.zoom = ZOOM_STEPS[ni];
     const [wx2, wy2] = this.screenToWorld(sx, sy);
     this.cam.x += wx - wx2;
     this.cam.y += wy - wy2;
+    this.camDirty = true;
+  }
+
+  /** 供 UI 显示当前倍率 */
+  get zoomLabel(): string {
+    return `${this.cam.zoom}x`;
   }
 
   // ==================== 渲染主流程 ====================
 
   render(world: World): void {
-    // 拉近才启用 4 倍细节，拉远用 1 像素/格保性能
-    const wantTile = this.cam.zoom >= 4 ? TILE_HI : TILE_LO;
+    const wantTile = pickTile(this.cam.zoom);
     if (wantTile !== this.tile || this.off.width !== world.w * wantTile) {
-      this.allocation(world);
+      this.allocate(world);
     }
 
-    if (this.dirty) {
-      this.paintGrid(world);
-      this.offCtx.putImageData(this.img, 0, 0);
+    const [vx, vy] = this.viewOrigin();
+    const vw = Math.ceil(this.cssW / this.cam.zoom) + 2;
+    const vh = Math.ceil(this.cssH / this.cam.zoom) + 2;
+    const region: Region = {
+      x0: Math.max(0, vx - 1),
+      y0: Math.max(0, vy - 1),
+      x1: Math.min(world.w, vx + vw),
+      y1: Math.min(world.h, vy + vh),
+    };
+
+    if (this.dirty || this.camDirty || !sameRegion(region, this.painted)) {
+      this.paintRegion(world, region);
+      this.offCtx.putImageData(
+        this.img, 0, 0,
+        region.x0 * this.tile, region.y0 * this.tile,
+        (region.x1 - region.x0) * this.tile, (region.y1 - region.y0) * this.tile,
+      );
+      this.painted = region;
       this.dirty = false;
+      this.camDirty = false;
     }
 
     const { ctx, cssW, cssH } = this;
     const z = this.cam.zoom;
-    const [vx, vy] = this.viewOrigin();
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.imageSmoothingEnabled = false;
@@ -269,9 +360,7 @@ export class Renderer {
     const z = this.cam.zoom;
     if (z < 4) return;
     const { ctx } = this;
-    ctx.strokeStyle = 'rgba(196,166,116,0.62)';
-    ctx.lineWidth = Math.max(1.5, z * 0.22);
-    ctx.lineCap = 'butt';
+    const segs: [[number, number], [number, number]][] = [];
 
     for (const n of world.nations) {
       if (!n.alive) continue;
@@ -290,48 +379,65 @@ export class Renderer {
           const d = Math.hypot(a.x - b.x, a.y - b.y);
           if (d < bestD) { bestD = d; best = b; }
         }
-        if (!best || bestD > 48) continue;
-        if (best.id < a.id) continue; // 一条边只画一次
+        if (!best || bestD > 55) continue;
+        if (best.id < a.id) continue;
         const [ax, ay] = this.worldToScreen(a.x + 0.5, a.y + 0.5);
         const [bx, by] = this.worldToScreen(best.x + 0.5, best.y + 0.5);
         if (Math.max(ax, bx) < -50 || Math.min(ax, bx) > this.cssW + 50) continue;
         if (Math.max(ay, by) < -50 || Math.min(ay, by) > this.cssH + 50) continue;
-        ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(bx, by);
-        ctx.stroke();
+        segs.push([[ax, ay], [bx, by]]);
       }
     }
+
+    // 先铺深色路基，再压浅色路面，两层叠起来才看得清
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(56,44,26,0.55)';
+    ctx.lineWidth = Math.max(3, z * 0.38);
+    for (const [[ax, ay], [bx, by]] of segs) {
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(219,196,146,0.9)';
+    ctx.lineWidth = Math.max(1.4, z * 0.18);
+    for (const [[ax, ay], [bx, by]] of segs) {
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
   }
 
-  // ==================== 地形层 ====================
+  // ==================== 地形层（只画可见区域） ====================
 
-  private paintGrid(world: World): void {
+  private paintRegion(world: World, r: Region): void {
     const { w, h, terrain, fert, owner, nationOf, fire, plague } = world;
     const buf = this.buf;
     const T2 = this.tile;
-    const W = w * T2;
+    const W = world.w * T2;
     const tint = this.buildTint(world);
+    const patStep = T2 === 8 ? 1 : 2;
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
+    for (let y = r.y0; y < r.y1; y++) {
+      for (let x = r.x0; x < r.x1; x++) {
         const i = y * w + x;
         const t = terrain[i];
         const pal = PALETTE[t] ?? PALETTE[0];
         const f = fert[i];
 
-        // --- 基础色 ---
         let br = pal[0];
         let bg = pal[1];
         let bb = pal[2];
 
-        // 肥力决定明暗，草原更亮、瘠地更暗
+        // 肥力决定明暗
         if (IS_LAND[t] && t !== T.Snow) {
           const v = 0.82 + (f / 255) * 0.34;
           br *= v; bg *= v; bb *= v;
         }
 
-        // --- 领土叠色：占比调高，让势力范围一眼可辨 ---
+        // 领土叠色
         const oid = owner[i];
         if (oid >= 0) {
           const tc = tint.get(oid);
@@ -342,7 +448,7 @@ export class Renderer {
           }
         }
 
-        // --- 国界：压暗到接近黑，形成清晰的分界线 ---
+        // 国界压暗
         if (oid >= 0) {
           const nid = nationOf[i];
           const rn = x + 1 < w ? nationOf[i + 1] : -1;
@@ -356,7 +462,7 @@ export class Renderer {
           }
         }
 
-        // --- 近岸浅水：紧邻陆地的水混合一点沙滩色，形成渐变带而不是硬边 ---
+        // 近岸浅水
         if (!IS_LAND[t]) {
           let nearLand = 0;
           if (y > 0 && IS_LAND[terrain[i - w]]) nearLand++;
@@ -371,68 +477,52 @@ export class Renderer {
           }
         }
 
-        // --- 灾难叠色 ---
         const fv = fire[i];
         const pv = plague[i];
-        let fk = 0;
-        let pk = 0;
-        if (fv > 0) fk = Math.min(1, fv / 150);
-        if (pv > 0) pk = Math.min(0.72, pv / 220);
+        const fk = fv > 0 ? Math.min(1, fv / 150) : 0;
+        const pk = pv > 0 ? Math.min(0.72, pv / 220) : 0;
 
-        // --- 海岸：紧邻陆地的水面顶部加一道浪花 ---
         const above = y > 0 ? terrain[i - w] : t;
         const surf = !IS_LAND[t] && IS_LAND[above] ? 1.35 : 1;
-        // --- 海岸阴影：下方紧邻水就加深，做出"陆地凸起"的感觉 ---
         const below = y + 1 < h ? terrain[i + w] : T.Deep;
-        const cliffShadow = IS_LAND[t] && !IS_LAND[below] ? 0.82 : 1;
+        const cliff = IS_LAND[t] && !IS_LAND[below] ? 0.84 : 1;
 
-        if (T2 === 1) {
-          let r = br, g = bg, b = bb;
-          if (fk > 0) {
-            r = r * (1 - fk) + (FIRE_HOT_RGB[0] * 0.45 + FIRE_RGB[0] * 0.55) * fk;
-            g = g * (1 - fk) + (FIRE_HOT_RGB[1] * 0.45 + FIRE_RGB[1] * 0.55) * fk;
-            b = b * (1 - fk) + (FIRE_HOT_RGB[2] * 0.35 + FIRE_RGB[2] * 0.35) * fk;
-          }
-          if (pk > 0) {
-            r = r * (1 - pk) + PLAGUE_RGB[0] * pk;
-            g = g * (1 - pk) + PLAGUE_RGB[1] * pk;
-            b = b * (1 - pk) + PLAGUE_RGB[2] * pk;
-          }
-          buf[y * W + x] = pack(r, g, b);
-          continue;
-        }
-
-        // --- 4×4 细节 ---
+        const pat = PATTERN[t];
         const ox = x * T2;
-        const oyBase = y * T2;
-        const seedA = hash2(x, y) * 1000;
+        const oy = y * T2;
 
         for (let py = 0; py < T2; py++) {
-          const rowBase = (oyBase + py) * W + ox;
+          const rowBase = (oy + py) * W + ox;
+          const patRow = pat ? pat[Math.min(7, Math.floor(py / patStep))] : undefined;
           for (let px = 0; px < T2; px++) {
-            const n = hash2(x * 7 + px + seedA, y * 13 + py);
-            let shade = tileShade(t, px, py, n);
-            // 底部一行压暗 = 整个地块的落地阴影
-            if (py === T2 - 1) shade *= 0.9;
-            shade *= cliffShadow;
+            let shade: number;
+            if (patRow) {
+              const ch = patRow[Math.min(7, Math.floor(px / patStep))] ?? '.';
+              const base = SHADE_OF[ch] ?? 1;
+              shade = ch === '.' ? base * (0.96 + hash2(x * 3 + px, y * 5 + py) * 0.08) : base;
+            } else {
+              shade = 0.96 + hash2(x * 3 + px, y * 5 + py) * 0.08;
+            }
+            if (py === T2 - 1) shade *= 0.92;
+            shade *= cliff;
             if (surf > 1 && py === 0) shade *= surf;
 
-            let r = br * shade;
-            let g = bg * shade;
-            let b = bb * shade;
+            let cr = br * shade;
+            let cg = bg * shade;
+            let cb = bb * shade;
 
             if (fk > 0) {
-              r = r * (1 - fk) + (FIRE_HOT_RGB[0] * 0.45 + FIRE_RGB[0] * 0.55) * fk;
-              g = g * (1 - fk) + (FIRE_HOT_RGB[1] * 0.45 + FIRE_RGB[1] * 0.55) * fk;
-              b = b * (1 - fk) + (FIRE_HOT_RGB[2] * 0.35 + FIRE_RGB[2] * 0.35) * fk;
+              cr = cr * (1 - fk) + (FIRE_HOT_RGB[0] * 0.45 + FIRE_RGB[0] * 0.55) * fk;
+              cg = cg * (1 - fk) + (FIRE_HOT_RGB[1] * 0.45 + FIRE_RGB[1] * 0.55) * fk;
+              cb = cb * (1 - fk) + (FIRE_HOT_RGB[2] * 0.35 + FIRE_RGB[2] * 0.35) * fk;
             }
             if (pk > 0) {
-              r = r * (1 - pk) + PLAGUE_RGB[0] * pk;
-              g = g * (1 - pk) + PLAGUE_RGB[1] * pk;
-              b = b * (1 - pk) + PLAGUE_RGB[2] * pk;
+              cr = cr * (1 - pk) + PLAGUE_RGB[0] * pk;
+              cg = cg * (1 - pk) + PLAGUE_RGB[1] * pk;
+              cb = cb * (1 - pk) + PLAGUE_RGB[2] * pk;
             }
 
-            buf[rowBase + px] = pack(r, g, b);
+            buf[rowBase + px] = pack(cr, cg, cb);
           }
         }
       }
@@ -448,13 +538,12 @@ export class Renderer {
     for (const s of world.settlements) {
       if (!s.alive || s.ruin) continue;
       const [sx, sy] = this.worldToScreen(s.x + 0.5, s.y + 0.5);
-      if (sx < -60 || sy < -60 || sx > this.cssW + 60 || sy > this.cssH + 60) continue;
+      if (sx < -80 || sy < -80 || sx > this.cssW + 80 || sy > this.cssH + 80) continue;
 
       const race = RACES[s.race];
-      const unit = z; // 一格的屏幕尺寸
+      const unit = z;
 
       if (z < 3) {
-        // 远景：只画一个方块标点，保持干净
         const size = Math.max(2, Math.round(unit * 0.55));
         ctx.fillStyle = race.color;
         ctx.fillRect(Math.round(sx - size / 2), Math.round(sy - size / 2), size, size);
@@ -465,120 +554,193 @@ export class Renderer {
         continue;
       }
 
-      // ---- 落地阴影 ----
+      // 落地阴影
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
       ctx.beginPath();
       ctx.ellipse(sx, sy + unit * 0.42, unit * 0.62, unit * 0.2, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // ---- 城墙 ----
-      const wallSize = unit * 1.25;
+      // 城墙：画成中空的围墙，能看见城里
       if (s.walls > 0) {
-        ctx.fillStyle = '#57503f';
-        ctx.fillRect(sx - wallSize / 2, sy - wallSize / 2, wallSize, wallSize);
-        ctx.fillStyle = '#6b6350';
-        ctx.fillRect(sx - wallSize / 2, sy - wallSize / 2, wallSize, Math.max(1, wallSize * 0.18));
+        const half = unit * 2.05;
+        const thick = Math.max(2, unit * 0.2);
+        ctx.fillStyle = 'rgba(20,16,10,0.5)';
+        ctx.fillRect(sx - half - 1, sy - half - 1, half * 2 + 2, thick + 2);
+        ctx.fillStyle = '#6f6752';
+        // 上
+        ctx.fillRect(sx - half, sy - half, half * 2, thick);
+        // 下
+        ctx.fillRect(sx - half, sy + half - thick, half * 2, thick);
+        // 左
+        ctx.fillRect(sx - half, sy - half, thick, half * 2);
+        // 右
+        ctx.fillRect(sx + half - thick, sy - half, thick, half * 2);
+        // 垛口
+        ctx.fillStyle = '#837a62';
+        for (let t = 0; t < 4; t++) {
+          const tx = sx - half + (half * 2 * (t + 0.5)) / 4 - thick * 0.3;
+          ctx.fillRect(tx, sy - half, thick * 0.6, thick * 0.5);
+          ctx.fillRect(tx, sy + half - thick * 0.5, thick * 0.6, thick * 0.5);
+        }
         // 城门缺口
-        ctx.fillStyle = '#3a3529';
-        const gate = Math.max(1, wallSize * 0.22);
-        ctx.fillRect(sx - gate / 2, sy + wallSize / 2 - gate, gate, gate);
+        const gate = Math.max(3, unit * 0.36);
+        ctx.fillStyle = '#3a3428';
+        ctx.fillRect(sx - gate / 2, sy + half - thick, gate, thick);
         if (s.walls >= 2) {
-          // 角楼
-          const tw = Math.max(2, wallSize * 0.2);
-          ctx.fillStyle = '#4a4436';
-          ctx.fillRect(sx - wallSize / 2 - tw * 0.4, sy - wallSize / 2 - tw * 0.4, tw, tw);
-          ctx.fillRect(sx + wallSize / 2 - tw * 0.6, sy - wallSize / 2 - tw * 0.4, tw, tw);
-          ctx.fillRect(sx - wallSize / 2 - tw * 0.4, sy + wallSize / 2 - tw * 0.6, tw, tw);
-          ctx.fillRect(sx + wallSize / 2 - tw * 0.6, sy + wallSize / 2 - tw * 0.6, tw, tw);
+          const tw = Math.max(3, unit * 0.3);
+          ctx.fillStyle = '#5a5340';
+          [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([dx, dy]) => {
+            ctx.fillRect(
+              sx + dx * half - tw / 2,
+              sy + dy * half - tw / 2,
+              tw, tw,
+            );
+          });
         }
       }
 
-      // ---- 建筑群：等级越高房子越多 ----
-      const houseCount = [2, 3, 5, 7, 10][s.tier] ?? 2;
-      const spread = unit * (s.walls > 0 ? 0.62 : 0.85);
-      const roof = shade(race.rgb, 1.15);
-      const roofDark = shade(race.rgb, 0.72);
+      // 建筑群：等级越高房子越多，沿两圈有序排布，彼此留出间隙
+      const houseCount = [2, 4, 6, 8, 11][s.tier] ?? 2;
+      const spread = unit * (s.walls > 0 ? 1.5 : 1.55);
+      const roof = shade(race.rgb, 0.95);
+      const roofDark = shade(race.rgb, 0.66);
       const seed = s.id * 7919 + 13;
+      const innerCount = Math.min(3, houseCount);
 
       for (let k = 0; k < houseCount; k++) {
-        const a = hash2(seed, k) * Math.PI * 2;
-        const rr = hash2(seed + 41, k) * spread;
+        const ring = k < innerCount ? 0 : 1;
+        const idxInRing = ring === 0 ? k : k - innerCount;
+        const perRing = ring === 0 ? innerCount : Math.max(1, houseCount - innerCount);
+        // 内圈转 45° 错开，避免和外圈重叠
+        const a = (idxInRing / perRing) * Math.PI * 2 + (ring === 0 ? Math.PI / 4 : 0) + hash2(seed, k) * 0.35;
+        const rr = spread * (ring === 0 ? 0.42 : 1) * (0.9 + hash2(seed + 41, k) * 0.2);
         const bx = sx + Math.cos(a) * rr;
         const by = sy + Math.sin(a) * rr * 0.72;
-        const hw = Math.max(3, unit * 0.4);
-        const hh = Math.max(3, unit * 0.34);
+        const hw = Math.max(6, unit * 0.62);
+        const hh = Math.max(6, unit * 0.58);
+        const bx0 = Math.round(bx - hw / 2);
+        const by0 = Math.round(by - hh / 2);
+        const bw = Math.round(hw);
+        const bh = Math.round(hh);
+        const ridgeY = by0 + Math.round(bh * 0.12);
+        const eaveY = by0 + Math.round(bh * 0.46);
+        const wallTop = eaveY;
+        const wallH = bh - Math.round(bh * 0.46);
 
-        // 房屋自身投影
-        ctx.fillStyle = 'rgba(0,0,0,0.22)';
-        ctx.fillRect(Math.round(bx - hw / 2) + 1, Math.round(by - hh / 2) + 2, Math.round(hw), Math.round(hh));
-        // 墙
-        ctx.fillStyle = k % 3 === 0 ? '#e0d3b2' : '#c9ba97';
-        ctx.fillRect(Math.round(bx - hw / 2), Math.round(by - hh / 2), Math.round(hw), Math.round(hh));
-        // 屋顶（种族色，带一点高光）
-        ctx.fillStyle = k % 2 === 0 ? roof : roofDark;
-        ctx.fillRect(Math.round(bx - hw / 2), Math.round(by - hh / 2), Math.round(hw), Math.max(2, Math.round(hh * 0.45)));
-        ctx.fillStyle = 'rgba(255,255,255,0.18)';
-        ctx.fillRect(Math.round(bx - hw / 2), Math.round(by - hh / 2), Math.round(hw), 1);
-        // 门（深色小方块，让"这是房子"一眼可辨）
-        if (hw >= 4) {
-          ctx.fillStyle = 'rgba(40,32,22,0.75)';
-          ctx.fillRect(Math.round(bx - hw * 0.12), Math.round(by + hh * 0.14), Math.max(1, Math.round(hw * 0.24)), Math.max(1, Math.round(hh * 0.28)));
+        // 落地影
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(bx0 + 2, by0 + bh - 1, bw, Math.max(1, Math.round(bh * 0.16)));
+
+        // 墙体（亮米白）
+        ctx.fillStyle = k % 3 === 0 ? '#f2e9d2' : '#e0d4b4';
+        ctx.fillRect(bx0, wallTop, bw, wallH);
+        // 右侧墙背光面
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.fillRect(bx0 + Math.round(bw * 0.62), wallTop, Math.round(bw * 0.38), wallH);
+        // 窗
+        if (bw >= 8) {
+          ctx.fillStyle = 'rgba(46,36,24,0.7)';
+          ctx.fillRect(bx0 + Math.round(bw * 0.12), wallTop + Math.round(wallH * 0.18), Math.max(1, Math.round(bw * 0.16)), Math.max(1, Math.round(wallH * 0.3)));
         }
+        // 门
+        if (bw >= 7) {
+          ctx.fillStyle = 'rgba(40,30,18,0.85)';
+          ctx.fillRect(
+            bx0 + Math.round(bw * 0.42),
+            wallTop + Math.round(wallH * 0.4),
+            Math.max(1, Math.round(bw * 0.2)),
+            Math.max(2, wallH - Math.round(wallH * 0.4)),
+          );
+        }
+
+        // 屋顶：倒梯形（屋脊在上），带明暗两面
+        ctx.fillStyle = k % 2 === 0 ? roof : roofDark;
+        ctx.beginPath();
+        ctx.moveTo(bx0 + bw * 0.5, ridgeY);
+        ctx.lineTo(bx0 + bw, eaveY);
+        ctx.lineTo(bx0, eaveY);
+        ctx.closePath();
+        ctx.fill();
+        // 屋顶背光右半
+        ctx.fillStyle = 'rgba(0,0,0,0.22)';
+        ctx.beginPath();
+        ctx.moveTo(bx0 + bw * 0.5, ridgeY);
+        ctx.lineTo(bx0 + bw, eaveY);
+        ctx.lineTo(bx0 + bw * 0.5, eaveY);
+        ctx.closePath();
+        ctx.fill();
+        // 屋脊高光
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillRect(bx0 + Math.round(bw * 0.4), ridgeY, Math.max(1, Math.round(bw * 0.2)), 1);
+        // 屋檐轮廓
+        ctx.fillStyle = 'rgba(20,15,10,0.45)';
+        ctx.fillRect(bx0, eaveY, bw, 1);
       }
 
-      // ---- 都城王宫 ----
+      // 都城王宫
       if (s.capital && s.tier >= 2) {
         const cw = Math.max(3, unit * 0.42);
         ctx.fillStyle = '#e8dcbc';
         ctx.fillRect(Math.round(sx - cw / 2), Math.round(sy - cw * 0.7), Math.round(cw), Math.round(cw));
         ctx.fillStyle = roof;
         ctx.fillRect(Math.round(sx - cw / 2), Math.round(sy - cw * 0.7), Math.round(cw), Math.max(1, Math.round(cw * 0.4)));
-        // 旗杆
         ctx.fillStyle = '#8a7a55';
         ctx.fillRect(Math.round(sx), Math.round(sy - cw * 1.5), Math.max(1, unit * 0.1), Math.round(cw * 0.8));
         ctx.fillStyle = race.color;
         ctx.fillRect(Math.round(sx + unit * 0.1), Math.round(sy - cw * 1.5), Math.max(2, unit * 0.22), Math.max(1, unit * 0.14));
       }
 
-      // ---- 人口：站在城边的小人（能看出是人形） ----
+      // 小人：站在房屋外圈，尺寸足够看出人形
       if (z >= 6) {
-        const people = Math.min(9, Math.max(2, Math.floor(s.pop / 70)));
+        const people = Math.min(8, Math.max(3, Math.floor(s.pop / 70)));
         const pseed = s.id * 131 + 7;
-        const headW = Math.max(2, Math.round(z * 0.18));
-        const bodyW = Math.max(2, Math.round(z * 0.2));
-        const bodyH = Math.max(3, Math.round(z * 0.38));
-        const skin = '#efc8a0';
+        const headW = Math.max(3, Math.round(z * 0.3));
+        const bodyW = Math.max(3, Math.round(z * 0.32));
+        const bodyH = Math.max(5, Math.round(z * 0.56));
+        const skin = '#f2cfa8';
 
         for (let k = 0; k < people; k++) {
-          const a = hash2(pseed, k) * Math.PI * 2;
-          const rr = unit * (0.7 + hash2(pseed + 17, k) * 0.45);
+          const a = (k / people) * Math.PI * 2 + hash2(pseed, k) * 0.5;
+          const rr = unit * (1.72 + hash2(pseed + 17, k) * 0.26);
           const px = Math.round(sx + Math.cos(a) * rr);
           const py = Math.round(sy + Math.sin(a) * rr * 0.72);
           const topY = py - headW;
+          const legH = Math.max(2, Math.round(z * 0.16));
+          const totalH = headW + bodyH + legH;
 
           // 落地影子
-          ctx.fillStyle = 'rgba(0,0,0,0.32)';
-          ctx.fillRect(px - Math.round(bodyW * 0.3), py + bodyH, bodyW + 1, Math.max(1, Math.round(z * 0.07)));
-          // 头
+          ctx.fillStyle = 'rgba(0,0,0,0.38)';
+          ctx.fillRect(px - 1, py + bodyH, bodyW + 2, Math.max(1, Math.round(z * 0.09)));
+          // 深色底：让小人从地形里跳出来
+          ctx.fillStyle = 'rgba(8,6,3,0.42)';
+          ctx.fillRect(px - 1, topY - 1, bodyW + 2, totalH + 2);
+          // 头（肤色）
           ctx.fillStyle = skin;
           ctx.fillRect(px, topY, headW, headW);
-          // 身体（种族色，深浅交替做出层次）
+          // 头发/头盔
+          ctx.fillStyle = shade(race.rgb, 0.85);
+          ctx.fillRect(px, topY, headW, Math.max(1, Math.round(headW * 0.45)));
+          // 身体
           ctx.fillStyle = k % 3 === 0 ? race.color : shade(race.rgb, 0.85);
           ctx.fillRect(px, topY + headW, bodyW, bodyH);
+          // 腰带
+          ctx.fillStyle = 'rgba(20,15,8,0.5)';
+          ctx.fillRect(px, topY + headW + Math.floor(bodyH * 0.6), bodyW, 1);
           // 腿
-          ctx.fillStyle = shade(race.rgb, 0.55);
-          ctx.fillRect(px, topY + headW + bodyH, Math.max(1, Math.round(bodyW * 0.35)), Math.max(1, Math.round(z * 0.1)));
+          ctx.fillStyle = shade(race.rgb, 0.5);
+          ctx.fillRect(px, topY + headW + bodyH, Math.max(1, Math.round(bodyW * 0.38)), legH);
+          ctx.fillRect(px + Math.max(1, Math.round(bodyW * 0.58)), topY + headW + bodyH, Math.max(1, Math.round(bodyW * 0.38)), legH);
         }
       }
 
-      // ---- 人口数字：只在很近时出现，描边而不是黑底框，避免破坏画面 ----
+      // 人口数字
       if (z >= 16) {
         const label = String(Math.round(s.pop));
-        ctx.font = `bold ${Math.max(8, Math.round(z * 0.58))}px ui-monospace, monospace`;
+        ctx.font = `bold ${Math.max(8, Math.round(z * 0.5))}px ui-monospace, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         const ty = sy - unit * 1.05;
-        ctx.lineWidth = Math.max(2, z * 0.18);
+        ctx.lineWidth = Math.max(2, z * 0.16);
         ctx.lineJoin = 'round';
         ctx.strokeStyle = 'rgba(4,7,11,0.88)';
         ctx.strokeText(label, sx, ty);
@@ -586,7 +748,6 @@ export class Renderer {
         ctx.fillText(label, sx, ty);
       }
 
-      // ---- 选中 ----
       if (this.selected === s.id) {
         ctx.strokeStyle = '#ffd447';
         ctx.lineWidth = 2;
@@ -623,7 +784,17 @@ export class Renderer {
   }
 }
 
-/** 把 [r,g,b] 压进小端序的 ABGR 整数 */
+/** 每格用多少细节像素：必须是 zoom 的约数，保证 1 个细节像素 = 整数个屏幕像素 */
+function pickTile(zoom: number): number {
+  if (zoom >= 8 && zoom % 8 === 0) return 8;
+  if (zoom >= 4 && zoom % 4 === 0) return 4;
+  return 1;
+}
+
+function sameRegion(a: Region, b: Region): boolean {
+  return a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1;
+}
+
 function pack(r: number, g: number, b: number): number {
   const ri = r < 0 ? 0 : r > 255 ? 255 : r | 0;
   const gi = g < 0 ? 0 : g > 255 ? 255 : g | 0;
@@ -631,7 +802,6 @@ function pack(r: number, g: number, b: number): number {
   return (255 << 24) | (bi << 16) | (gi << 8) | ri;
 }
 
-/** 按倍率调整颜色，用于生成同一色系的深浅 */
 function shade(rgb: [number, number, number], k: number): string {
   const r = Math.min(255, Math.round(rgb[0] * k));
   const g = Math.min(255, Math.round(rgb[1] * k));
