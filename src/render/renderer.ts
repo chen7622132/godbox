@@ -280,6 +280,28 @@ export class Renderer {
         let bg = pal[1] * base;
         let bb = pal[2] * base;
 
+        // --- 地形过渡带：和邻居不同地形时混入对方颜色，消掉硬边 ---
+        if (IS_LAND[t]) {
+          let mixR = 0, mixG = 0, mixB = 0, mixN = 0;
+          // 只向"更软"的邻居混合：草↔沙、草↔森林、丘陵↔草、雪→草
+          const nb: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+          for (const [dx, dy] of nb) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const nt = terrain[ny * w + nx];
+            if (nt === t || !IS_LAND[nt]) continue;
+            const np = PALETTE[nt];
+            mixR += np[0]; mixG += np[1]; mixB += np[2]; mixN++;
+          }
+          if (mixN > 0) {
+            const k = 0.17 / mixN;
+            br = br * (1 - 0.17) + mixR * k;
+            bg = bg * (1 - 0.17) + mixG * k;
+            bb = bb * (1 - 0.17) + mixB * k;
+          }
+        }
+
         // 领土色
         const oid = owner[i];
         if (oid >= 0) {
@@ -305,19 +327,27 @@ export class Renderer {
           }
         }
 
-        // 近岸浅水
+        // --- 水面：按离岸距离做深浅渐变 + 岸边泡沫 ---
+        let shallowK = 0;
         if (!IS_LAND[t]) {
+          const dirs: [number, number][] = [
+            [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1],
+          ];
           let near = 0;
-          if (y > 0 && IS_LAND[terrain[i - w]]) near++;
-          if (y + 1 < h && IS_LAND[terrain[i + w]]) near++;
-          if (x > 0 && IS_LAND[terrain[i - 1]]) near++;
-          if (x + 1 < w && IS_LAND[terrain[i + 1]]) near++;
-          if (near > 0) {
-            const k = Math.min(0.4, near * 0.12);
-            br = br * (1 - k) + 116 * k;
-            bg = bg * (1 - k) + 172 * k;
-            bb = bb * (1 - k) + 184 * k;
+          for (const [dx, dy] of dirs) {
+            for (let d = 1; d <= 3; d++) {
+              const nx = x + dx * d;
+              const ny = y + dy * d;
+              if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+              if (IS_LAND[terrain[ny * w + nx]]) { near += 4 - d; break; }
+            }
           }
+          const wob = vnoise(x * 0.22, y * 0.22, 61);
+          shallowK = Math.min(1, (near / 20) * 0.8 + wob * 0.25);
+          const k = shallowK * 0.55;
+          br = br * (1 - k) + 128 * k;
+          bg = bg * (1 - k) + 190 * k;
+          bb = bb * (1 - k) + 200 * k;
         }
 
         const fv = fire[i];
@@ -374,58 +404,61 @@ export class Renderer {
         const variant = Math.floor(h2(x * 7919, y * 104729) * 3) % 3;
         const cx = x * T2;
         const cy = y * T2;
+        // 位置抖动：让树/石/草不要在格子里对齐成网格
+        const jx = Math.round((h2(x * 17 + 5, y * 19 + 3) - 0.5) * T2 * 0.9);
+        const jy = Math.round((h2(x * 23 + 11, y * 29 + 7) - 0.5) * T2 * 0.75);
 
         if (t === T.Forest) {
           // 密度随大尺度噪声变化：有的地方是密林，有的是林间空地
           const dens = vnoise(x * 0.13, y * 0.13, 23);
           if (rnd < 0.4 + dens * 0.55) {
             const sp = deco.forest[variant];
-            blit(buf, W, H, sp, cx + ((T2 - sp.w) >> 1), cy + T2 - sp.h + Math.round(T2 * 0.2));
+            blit(buf, W, H, sp, cx + ((T2 - sp.w) >> 1) + jx, cy + T2 - sp.h + Math.round(T2 * 0.2) + jy);
           }
         } else if (t === T.Grass) {
           const dens = vnoise(x * 0.11, y * 0.11, 29);
           if (rnd < dens * 0.18) {
             const sp = deco.tree[variant];
-            blit(buf, W, H, sp, cx + ((T2 - sp.w) >> 1), cy + T2 - sp.h + Math.round(T2 * 0.2));
+            blit(buf, W, H, sp, cx + ((T2 - sp.w) >> 1) + jx, cy + T2 - sp.h + Math.round(T2 * 0.2) + jy);
           } else if (rnd < 0.22 + dens * 0.2) {
             const sp = deco.bush[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         } else if (t === T.Hill) {
           if (rnd < 0.16) {
             const sp = deco.rock[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           } else if (rnd < 0.26) {
             const sp = deco.bush[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         } else if (t === T.Mountain) {
           if (rnd < 0.4) {
             const sp = deco.rock[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         } else if (t === T.Snow) {
           if (rnd < 0.12) {
             const sp = deco.snowRock[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         } else if (t === T.Swamp) {
           if (rnd < 0.28) {
             const sp = deco.puddle[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           } else if (rnd < 0.5) {
             const sp = deco.bush[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         } else if (t === T.Sand) {
           if (rnd < 0.05) {
             const sp = deco.rock[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         } else if (t === T.Ruin) {
           if (rnd < 0.35) {
             const sp = deco.rock[variant];
-            blit(buf, W, H, sp, cx, cy + T2 - sp.h);
+            blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         }
       }
@@ -611,6 +644,112 @@ export class Renderer {
         const bx = sx + Math.cos(a) * rr;
         const by = sy + Math.sin(a) * rr * 0.7;
         this.drawHouse(bx, by, unit * 0.72, unit * 0.7, roof, roofDark, k % 3 === 0, k % 2 === 0);
+      }
+
+      // ---- 农田：城外一圈小麦色条纹地块 ----
+      if (s.tier >= 1) {
+        const farmCount = s.tier >= 3 ? 4 : s.tier >= 2 ? 3 : 2;
+        for (let k = 0; k < farmCount; k++) {
+          const a = (k / farmCount) * Math.PI * 2 + 0.7 + h2(s.id, k) * 0.4;
+          const rr = unit * (2.15 + h2(s.id + 3, k) * 0.55);
+          const fx = Math.round(sx + Math.cos(a) * rr);
+          const fy = Math.round(sy + Math.sin(a) * rr * 0.68);
+          const fw = Math.max(5, Math.round(unit * 0.62));
+          const fh = Math.max(4, Math.round(unit * 0.46));
+          // 田埂
+          ctx.fillStyle = 'rgba(92,74,40,0.55)';
+          ctx.fillRect(fx - fw / 2 - 1, fy - fh / 2 - 1, fw + 2, fh + 2);
+          // 麦田底色
+          ctx.fillStyle = k % 2 === 0 ? '#cbb855' : '#bfa947';
+          ctx.fillRect(fx - fw / 2, fy - fh / 2, fw, fh);
+          // 垄沟
+          ctx.fillStyle = 'rgba(96,76,32,0.4)';
+          const rows = Math.max(2, Math.round(fh / 2));
+          for (let i = 0; i < rows; i++) {
+            ctx.fillRect(fx - fw / 2, fy - fh / 2 + i * (fh / rows), fw, 1);
+          }
+        }
+      }
+
+      // ---- 塔楼：城镇以上，城角一座高塔 ----
+      if (s.tier >= 2) {
+        const ta = h2(s.id, 77) * Math.PI * 2;
+        const tx = sx + Math.cos(ta) * unit * 1.05;
+        const ty = sy + Math.sin(ta) * unit * 0.8;
+        const tw = Math.max(3, unit * 0.26);
+        const th = Math.max(6, unit * 0.95);
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(tx + 2, ty - th * 0.2 + 2, tw, th * 0.9);
+        ctx.fillStyle = '#9a917a';
+        ctx.fillRect(tx, ty - th * 0.8, tw, th * 0.85);
+        ctx.fillStyle = 'rgba(0,0,0,0.28)';
+        ctx.fillRect(tx + tw * 0.62, ty - th * 0.8, tw * 0.38, th * 0.85);
+        // 塔顶
+        ctx.fillStyle = roof;
+        ctx.beginPath();
+        ctx.moveTo(tx + tw * 0.5, ty - th * 1.25);
+        ctx.lineTo(tx + tw, ty - th * 0.8);
+        ctx.lineTo(tx, ty - th * 0.8);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // ---- 神庙：城市以上，一座带尖顶的大殿 ----
+      if (s.tier >= 3) {
+        const ga = h2(s.id, 91) * Math.PI * 2;
+        const gx = sx + Math.cos(ga) * unit * 1.45;
+        const gy = sy + Math.sin(ga) * unit * 0.95;
+        const gw = Math.max(6, unit * 0.7);
+        const gh = Math.max(6, unit * 0.62);
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(gx - gw / 2 + 2, gy - gh / 2 + 2, gw, gh);
+        ctx.fillStyle = '#e8ddc0';
+        ctx.fillRect(gx - gw / 2, gy - gh / 2, gw, gh);
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.fillRect(gx + gw * 0.2, gy - gh / 2, gw * 0.3, gh);
+        // 尖顶 + 十字
+        ctx.fillStyle = '#b8a06a';
+        ctx.beginPath();
+        ctx.moveTo(gx, gy - gh * 1.35);
+        ctx.lineTo(gx + gw * 0.42, gy - gh * 0.5);
+        ctx.lineTo(gx - gw * 0.42, gy - gh * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#fff4cf';
+        ctx.fillRect(gx - 1, gy - gh * 1.55, 2, Math.max(3, gh * 0.28));
+        ctx.fillRect(gx - Math.max(2, gh * 0.14), gy - gh * 1.45, Math.max(4, gh * 0.28), 2);
+      }
+
+      // ---- 码头：紧邻水面的城市，向水里伸出一条栈桥 ----
+      {
+        let waterDir: [number, number] | null = null;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as [number, number][]) {
+          for (let d = 2; d <= 4; d++) {
+            const nx = s.x + dx * d;
+            const ny = s.y + dy * d;
+            if (nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) break;
+            const nt = world.terrain[ny * world.w + nx];
+            if (nt === T.Water || nt === T.Deep) { waterDir = [dx, dy]; break; }
+          }
+          if (waterDir) break;
+        }
+        if (waterDir) {
+          const [dx, dy] = waterDir;
+          const px0 = sx + dx * unit * 1.1;
+          const py0 = sy + dy * unit * 0.9;
+          const len = unit * 1.6;
+          ctx.strokeStyle = '#8a6f45';
+          ctx.lineWidth = Math.max(2, unit * 0.22);
+          ctx.beginPath();
+          ctx.moveTo(px0, py0);
+          ctx.lineTo(px0 + dx * len, py0 + dy * len * 0.7);
+          ctx.stroke();
+          // 小船
+          const bx2 = px0 + dx * len;
+          const by2 = py0 + dy * len * 0.7;
+          ctx.fillStyle = '#6d5333';
+          ctx.fillRect(bx2 - unit * 0.2, by2 - unit * 0.08, unit * 0.4, unit * 0.16);
+        }
       }
 
       // 都城王宫

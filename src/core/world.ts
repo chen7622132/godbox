@@ -126,7 +126,7 @@ export function generateWorld(opt: WorldGenOptions): World {
       } else if (hn < 0.055) {
         ter = T.Sand;
       } else if (hn < 0.5) {
-        if (m > 0.66 && hn < 0.2) ter = T.Swamp;
+        if (m > 0.58 && hn < 0.26) ter = T.Swamp;
         else if (m > 0.46) ter = T.Forest;
         else ter = T.Grass;
       } else if (hn < 0.7) {
@@ -171,6 +171,11 @@ export function generateWorld(opt: WorldGenOptions): World {
   // 稀疏化陆地判定：清理孤立单格水洼/陆地，让海岸线更"像素友好"
   cleanupIslands(terrain, w, h);
 
+  // 开凿河流：从丘陵/山地一路流到海里
+  carveRivers(terrain, fert, w, h, rng, Math.max(7, Math.round((w * h) / 5200)));
+  // 点缀湖泊：低洼处积水，让水系看起来完整
+  carveLakes(terrain, fert, w, h, rng, Math.max(10, Math.round((w * h) / 1600)));
+
   const world: World = {
     w,
     h,
@@ -207,6 +212,134 @@ export function generateWorld(opt: WorldGenOptions): World {
     overtime: false,
   };
   return world;
+}
+
+/** 点缀湖泊：在陆地上挖出不规则的小水面，湖岸带一圈浅沙 */
+function carveLakes(
+  terrain: Uint8Array, fert: Uint8Array,
+  w: number, h: number, rng: Rng, count: number,
+): void {
+  for (let k = 0; k < count; k++) {
+    const cx = rng.int(w);
+    const cy = rng.int(h);
+    const i0 = cy * w + cx;
+    const t0 = terrain[i0];
+    if (t0 === T.Water || t0 === T.Deep || t0 === T.Snow || t0 === T.Mountain) continue;
+
+    const rx = 3 + rng.int(5);
+    const ry = 2 + rng.int(4);
+
+    for (let dy = -Math.ceil(ry) - 1; dy <= Math.ceil(ry) + 1; dy++) {
+      const y = cy + dy;
+      if (y < 1 || y >= h - 1) continue;
+      for (let dx = -Math.ceil(rx) - 1; dx <= Math.ceil(rx) + 1; dx++) {
+        const x = cx + dx;
+        if (x < 1 || x >= w - 1) continue;
+        const d = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
+        const i = y * w + x;
+        if (d <= 1) {
+          if (terrain[i] === T.Deep) continue;
+          terrain[i] = T.Water;
+          fert[i] = 145;
+        } else if (d <= 1.9 && rng.chance(0.5)) {
+          // 湖岸浅滩
+          const t = terrain[i];
+          if (t === T.Grass || t === T.Forest || t === T.Swamp) {
+            terrain[i] = T.Sand;
+            fert[i] = 110;
+          }
+        }
+      }
+    }
+  }
+}
+
+/** 地形"高度"排序，用来决定水往哪里流 */
+const WATER_RANK = [0, 0.5, 1, 2, 2.2, 3, 4, 4.5, 1.5, 2];
+
+/**
+ * 开凿河流：从丘陵/山地取源点，沿最陡下降方向一路挖到海里。
+ * 遇到局部最低点就积成小湖，然后停住。
+ */
+function carveRivers(
+  terrain: Uint8Array, fert: Uint8Array,
+  w: number, h: number, rng: Rng, count: number,
+): void {
+  const dirs: [number, number][] = [
+    [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1],
+  ];
+
+  for (let r = 0; r < count; r++) {
+    // 找源头：优先丘陵/山地，找不到就退而取森林里的"高处"
+    let sx = -1;
+    let sy = -1;
+    for (let t = 0; t < 900; t++) {
+      const x = rng.int(w);
+      const y = rng.int(h);
+      const ter = terrain[y * w + x];
+      if (ter === T.Hill || ter === T.Mountain) { sx = x; sy = y; break; }
+      if (sx < 0 && ter === T.Forest && rng.chance(0.25)) { sx = x; sy = y; }
+    }
+    if (sx < 0) continue;
+
+    let x = sx;
+    let y = sy;
+    let steps = 0;
+    while (steps++ < 400) {
+      const i = y * w + x;
+      const ter = terrain[i];
+      if (ter === T.Water || ter === T.Deep) break;
+
+      terrain[i] = T.Water;
+      fert[i] = 130;
+
+      // 河宽 1-2 格：随机往一侧再啃一格，形成宽窄变化
+      if (rng.chance(0.5)) {
+        const side: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+        const [dx, dy] = side[rng.int(4)];
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx > 0 && ny > 0 && nx < w - 1 && ny < h - 1) {
+          const j = ny * w + nx;
+          if (terrain[j] !== T.Deep) {
+            terrain[j] = T.Water;
+            fert[j] = 150;
+          }
+        }
+      }
+
+      // 每走 3 步把河岸啃掉一点，做出宽窄变化
+      if (steps % 3 === 0) {
+        for (const [dx, dy] of dirs) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
+          const j = ny * w + nx;
+          const nt = terrain[j];
+          if (nt === T.Water || nt === T.Deep || nt === T.Snow) continue;
+          if (rng.chance(0.4)) {
+            terrain[j] = T.Water;
+            fert[j] = 150;
+          }
+        }
+      }
+
+      // 下一步：走向最低的邻居
+      let bx = -1;
+      let by = -1;
+      let bestR = 99;
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
+        const rr = WATER_RANK[terrain[ny * w + nx]] ?? 2;
+        if (rr < bestR - 0.001) { bestR = rr; bx = nx; by = ny; }
+      }
+      if (bx < 0) break;
+      x = bx;
+      y = by;
+    }
+  }
 }
 
 /** 去掉只有 1-2 格的孤立陆地/水塘，让地图更像"大陆"而不是噪点 */
