@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>GodBox · 上帝盒子</title>
+    <meta name="description" content="像素风创世沙盒：造陆、撒种、看四族兴衰。" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23223'/><rect x='2' y='6' width='5' height='5' fill='%2367c35b'/><rect x='9' y='3' width='5' height='8' fill='%23e0b060'/></svg>" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- 画布 -->
+      <canvas id="world"></canvas>
+
+      <!-- 顶部状态条 -->
+      <header id="hud">
+        <div class="hud-left">
+          <span class="brand">GodBox</span>
+          <span id="hud-year" title="世界纪年">第 0 年</span>
+          <span id="hud-pop" title="总人口">人口 0</span>
+          <span id="hud-nations" title="国家数">国家 0</span>
+        </div>
+        <div class="hud-right">
+          <button id="btn-speed" class="hud-btn" title="空格：暂停/继续">▶ 1x</button>
+          <button id="btn-save" class="hud-btn" title="存档到浏览器">存档</button>
+          <button id="btn-load" class="hud-btn" title="读取浏览器存档">读档</button>
+          <button id="btn-export" class="hud-btn" title="导出存档文件">导出</button>
+          <button id="btn-end" class="hud-btn danger" title="立即结算本局">结算</button>
+        </div>
+      </header>
+
+      <!-- 左侧：神迹工具栏 -->
+      <nav id="toolbar" aria-label="神迹工具"></nav>
+
+      <!-- 右侧：编年史 -->
+      <aside id="chronicle">
+        <div class="panel-head">
+          <span>世界编年史</span>
+          <button id="btn-chron-toggle" class="mini" title="收起/展开">—</button>
+        </div>
+        <ol id="chronicle-list"></ol>
+      </aside>
+
+      <!-- 左下：选中信息 -->
+      <section id="inspector" hidden></section>
+
+      <!-- 右下：种族战报 -->
+      <section id="races"></section>
+
+      <!-- 提示条 -->
+      <div id="toast"></div>
+
+      <!-- 创世 / 结算遮罩 -->
+      <div id="overlay" class="overlay"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

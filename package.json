@@ -1,0 +1,21 @@
+{
+  "name": "godbox",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A pixel sandbox god simulator — create a world, seed four races, watch civilizations rise and fall.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "build:single": "vite build && node scripts/build-single.mjs",
+    "simtest": "esbuild scripts/simtest.ts --bundle --platform=node --format=esm --outfile=/tmp/simtest.mjs && node /tmp/simtest.mjs",
+    "ui-check": "node scripts/ui-check.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
