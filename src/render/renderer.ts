@@ -2,18 +2,39 @@ import { T, IS_LAND, type World } from '../core/types';
 import { RACES } from '../core/races';
 import { genTree, genRock, genBush, genPuddle, blit, packPx, type Sprite } from './sprites';
 
-/** 地形基础色 [r,g,b] */
+/**
+ * 地形基础色 [r,g,b] —— 取自 WorldBox 官方地形表「方块颜色」
+ * 深海 #2D61AF / 浅滩 #55AEF0 / 沙 #F7E898 / 草 #76B153 / 林 #46A052
+ * 丘陵 #5B5E5C / 山 #414545 / 雪 #D3E4E3 / 沼泽 #746655
+ */
 const PALETTE: [number, number, number][] = [
-  [15, 38, 70],    // 0 Deep
-  [34, 92, 144],   // 1 Water
-  [220, 200, 146], // 2 Sand
-  [98, 156, 74],   // 3 Grass
-  [44, 96, 56],    // 4 Forest
-  [146, 150, 98],  // 5 Hill
-  [132, 126, 116], // 6 Mountain
-  [212, 224, 234], // 7 Snow
-  [72, 86, 62],    // 8 Swamp
-  [106, 98, 88],   // 9 Ruin
+  [45, 97, 175],   // 0 Deep   #2D61AF
+  [85, 174, 240],  // 1 Water  #55AEF0
+  [247, 232, 152], // 2 Sand   #F7E898
+  [118, 177, 83],  // 3 Grass  #76B153
+  [70, 160, 82],   // 4 Forest #46A052
+  [91, 94, 92],    // 5 Hill   #5B5E5C
+  [65, 69, 69],    // 6 Mountain #414545
+  [211, 228, 227], // 7 Snow   #D3E4E3
+  [116, 102, 85],  // 8 Swamp  #746655
+  [176, 169, 154], // 9 Ruin
+];
+
+/**
+ * 地形「边缘色」—— WorldBox 每个方块 = 底色 + 1px 略亮内边，
+ * 这是整个画面「有厚度」的唯一来源。这里存亮边系数用途的绝对色。
+ */
+const EDGE: [number, number, number][] = [
+  [61, 118, 199],  // 0 深海亮边
+  [63, 144, 234],  // 1 浅滩边 #3F90EA
+  [255, 247, 200], // 2 沙边（#D8C08C 提亮）
+  [140, 220, 106], // 3 草边 #8CDC6A
+  [138, 207, 85],  // 4 林边 #8ACF55
+  [122, 126, 124], // 5 丘陵边
+  [91, 94, 92],    // 6 山边
+  [252, 253, 253], // 7 雪边 #FCFDFD
+  [140, 142, 101], // 8 沼泽边 #8C8E65
+  [205, 198, 182], // 9 废墟边
 ];
 
 const FIRE: [number, number, number] = [252, 140, 44];
@@ -267,40 +288,19 @@ export class Renderer {
         const pal = PALETTE[t] ?? PALETTE[0];
         const f = fert[i];
 
-        // 三层噪声：大斑块 / 中起伏 / 每像素颗粒
-        const low = vnoise(x * 0.09, y * 0.09, 3);
-        const mid = vnoise(x * 0.4, y * 0.4, 11);
-        let base = 0.74 + low * 0.36 + mid * 0.14;
+        // WorldBox 是「平色块」：只保留极轻微的大尺度变化，不做每格颗粒
+        const low = vnoise(x * 0.055, y * 0.055, 3);
+        let base = 0.95 + (low - 0.5) * 0.09;
 
         if (IS_LAND[t] && t !== T.Snow) {
-          base *= 0.86 + (f / 255) * 0.3;
+          base *= 0.94 + (f / 255) * 0.12;
         }
 
         let br = pal[0] * base;
         let bg = pal[1] * base;
         let bb = pal[2] * base;
 
-        // --- 地形过渡带：和邻居不同地形时混入对方颜色，消掉硬边 ---
-        if (IS_LAND[t]) {
-          let mixR = 0, mixG = 0, mixB = 0, mixN = 0;
-          // 只向"更软"的邻居混合：草↔沙、草↔森林、丘陵↔草、雪→草
-          const nb: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
-          for (const [dx, dy] of nb) {
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-            const nt = terrain[ny * w + nx];
-            if (nt === t || !IS_LAND[nt]) continue;
-            const np = PALETTE[nt];
-            mixR += np[0]; mixG += np[1]; mixB += np[2]; mixN++;
-          }
-          if (mixN > 0) {
-            const k = 0.17 / mixN;
-            br = br * (1 - 0.17) + mixR * k;
-            bg = bg * (1 - 0.17) + mixG * k;
-            bb = bb * (1 - 0.17) + mixB * k;
-          }
-        }
+        // WorldBox 海岸是「阶梯式硬过渡」：不做颜色混合，靠地形层次本身的色差形成台阶
 
         // 领土色
         const oid = owner[i];
@@ -327,27 +327,21 @@ export class Renderer {
           }
         }
 
-        // --- 水面：按离岸距离做深浅渐变 + 岸边泡沫 ---
-        let shallowK = 0;
-        if (!IS_LAND[t]) {
-          const dirs: [number, number][] = [
+        // --- 水面：只有两级（深海 / 浅滩），硬切，WorldBox 不做渐变 ---
+        if (t === T.Deep) {
+          const nb8: [number, number][] = [
             [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1],
           ];
-          let near = 0;
-          for (const [dx, dy] of dirs) {
-            for (let d = 1; d <= 3; d++) {
-              const nx = x + dx * d;
-              const ny = y + dy * d;
-              if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-              if (IS_LAND[terrain[ny * w + nx]]) { near += 4 - d; break; }
+          for (const [dx, dy] of nb8) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            if (IS_LAND[terrain[ny * w + nx]]) {
+              const sp = PALETTE[1];
+              br = sp[0] * base; bg = sp[1] * base; bb = sp[2] * base;
+              break;
             }
           }
-          const wob = vnoise(x * 0.22, y * 0.22, 61);
-          shallowK = Math.min(1, (near / 20) * 0.8 + wob * 0.25);
-          const k = shallowK * 0.55;
-          br = br * (1 - k) + 128 * k;
-          bg = bg * (1 - k) + 190 * k;
-          bb = bb * (1 - k) + 200 * k;
         }
 
         const fv = fire[i];
@@ -355,27 +349,42 @@ export class Renderer {
         const fk = fv > 0 ? Math.min(1, fv / 150) : 0;
         const pk = pv > 0 ? Math.min(0.75, pv / 220) : 0;
 
-        const above = y > 0 ? terrain[i - w] : t;
-        const surf = !IS_LAND[t] && IS_LAND[above] ? 1.3 : 1;
         const below = y + 1 < h ? terrain[i + w] : T.Deep;
         const cliff = IS_LAND[t] && !IS_LAND[below] ? 0.85 : 1;
 
         const ox = x * T2;
         const oy = y * T2;
+        const ep = EDGE[t] ?? EDGE[0];
+        // 放大后边缘同步加粗，保持「方块」质感
+        const ew = T2 >= 14 ? 2 : 1;
+        const drawEdge = T2 >= 3;
         for (let py = 0; py < T2; py++) {
           const rowBase = (oy + py) * W + ox;
-          // 水面横向波纹
-          const ripple = !IS_LAND[t] ? Math.sin((y * T2 + py) * 0.9 + x * 0.6) * 0.05 : 0;
           for (let px = 0; px < T2; px++) {
-            const grain = (h2(x * 31 + px, y * 37 + py) - 0.5) * 0.09;
-            let s = 1 + grain + ripple;
-            if (py === T2 - 1) s *= 0.93;
+            const grain = (h2(x * 31 + px, y * 37 + py) - 0.5) * 0.03;
+            let s = 1 + grain;
             s *= cliff;
-            if (surf > 1 && py === 0) s *= surf;
 
-            let cr = br * s;
-            let cg = bg * s;
-            let cb = bb * s;
+            let cr: number;
+            let cg: number;
+            let cb: number;
+
+            if (drawEdge && (py < ew || px < ew)) {
+              // 上/左：亮边 —— 光从左上来，方块「凸起」
+              cr = (br * 0.48 + ep[0] * 0.52) * s;
+              cg = (bg * 0.48 + ep[1] * 0.52) * s;
+              cb = (bb * 0.48 + ep[2] * 0.52) * s;
+            } else if (drawEdge && (py >= T2 - ew || px >= T2 - ew)) {
+              // 下/右：仍是亮边，但只混 20% —— WorldBox 是「底色+浅色内边」，
+              // 不用暗边，否则相邻格子的亮暗边会拼成一张深色渔网
+              cr = (br * 0.80 + ep[0] * 0.20) * s;
+              cg = (bg * 0.80 + ep[1] * 0.20) * s;
+              cb = (bb * 0.80 + ep[2] * 0.20) * s;
+            } else {
+              cr = br * s;
+              cg = bg * s;
+              cb = bb * s;
+            }
             if (fk > 0) {
               cr = cr * (1 - fk) + (FIRE_HOT[0] * 0.45 + FIRE[0] * 0.55) * fk;
               cg = cg * (1 - fk) + (FIRE_HOT[1] * 0.45 + FIRE[1] * 0.55) * fk;
@@ -550,16 +559,18 @@ export class Renderer {
     }
 
     ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(56,44,26,0.5)';
-    ctx.lineWidth = Math.max(3, z * 0.36);
+    // 路基（深土色压底，让路从草地/沙地里"跳"出来）
+    ctx.strokeStyle = 'rgba(92,70,44,0.62)';
+    ctx.lineWidth = Math.max(3.4, z * 0.52);
     for (const [[ax, ay], [bx, by]] of segs) {
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       ctx.lineTo(bx, by);
       ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(214,192,144,0.88)';
-    ctx.lineWidth = Math.max(1.4, z * 0.17);
+    // 路面（踩实的浅土色）
+    ctx.strokeStyle = 'rgba(226,200,150,0.95)';
+    ctx.lineWidth = Math.max(2, z * 0.28);
     for (const [[ax, ay], [bx, by]] of segs) {
       ctx.beginPath();
       ctx.moveTo(ax, ay);
@@ -767,41 +778,40 @@ export class Renderer {
       }
 
       // 小人
-      if (z >= 6) {
-        const people = Math.min(8, Math.max(3, Math.floor(s.pop / 70)));
+      if (z >= 5) {
+        const people = Math.min(9, Math.max(4, Math.floor(s.pop / 65)));
         const pseed = s.id * 131 + 7;
-        const headW = Math.max(3, Math.round(z * 0.3));
-        const bodyW = Math.max(3, Math.round(z * 0.32));
-        const bodyH = Math.max(5, Math.round(z * 0.56));
-        const skin = '#f2cfa8';
+        const headW = Math.max(4, Math.round(z * 0.4));
+        const bodyW = Math.max(4, Math.round(z * 0.42));
+        const bodyH = Math.max(6, Math.round(z * 0.7));
+        const skin = '#f4d3ae';
 
         for (let k = 0; k < people; k++) {
           const a = (k / people) * Math.PI * 2 + h2(pseed, k) * 0.5;
-          const rr = unit * (1.55 + h2(pseed + 17, k) * 0.3);
+          const rr = unit * (1.95 + h2(pseed + 17, k) * 0.35);
           const px = Math.round(sx + Math.cos(a) * rr);
-          const py = Math.round(sy + Math.sin(a) * rr * 0.7);
+          const py = Math.round(sy + Math.sin(a) * rr * 0.72);
           const topY = py - headW;
-          const legH = Math.max(2, Math.round(z * 0.16));
+          const legH = Math.max(2, Math.round(z * 0.22));
           const totalH = headW + bodyH + legH;
 
-          ctx.fillStyle = 'rgba(0,0,0,0.38)';
-          ctx.fillRect(px - 1, py + bodyH, bodyW + 2, Math.max(1, Math.round(z * 0.09)));
-          ctx.fillStyle = 'rgba(8,6,3,0.42)';
-          ctx.fillRect(px - 1, topY - 1, bodyW + 2, totalH + 2);
+          // 深色底衬：让小人从绿地/沙地里"跳"出来（WorldBox 也是靠这个）
+          ctx.fillStyle = 'rgba(6,5,2,0.55)';
+          ctx.fillRect(px - 2, topY - 1, bodyW + 4, totalH + 3);
           ctx.fillStyle = skin;
           ctx.fillRect(px, topY, headW, headW);
-          ctx.fillStyle = shade(race.rgb, 0.85);
-          ctx.fillRect(px, topY, headW, Math.max(1, Math.round(headW * 0.45)));
-          ctx.fillStyle = k % 3 === 0 ? race.color : shade(race.rgb, 0.85);
+          ctx.fillStyle = shade(race.rgb, 0.7);
+          ctx.fillRect(px, topY, headW, Math.max(1, Math.round(headW * 0.42)));
+          ctx.fillStyle = k % 4 === 0 ? shade(race.rgb, 1.25) : shade(race.rgb, 0.9);
           ctx.fillRect(px, topY + headW, bodyW, bodyH);
-          ctx.fillStyle = 'rgba(20,15,8,0.5)';
-          ctx.fillRect(px, topY + headW + Math.floor(bodyH * 0.6), bodyW, 1);
+          ctx.fillStyle = 'rgba(255,255,255,0.22)';
+          ctx.fillRect(px, topY + headW, bodyW, Math.max(1, Math.round(bodyH * 0.25)));
           ctx.fillStyle = shade(race.rgb, 0.5);
-          ctx.fillRect(px, topY + headW + bodyH, Math.max(1, Math.round(bodyW * 0.38)), legH);
+          ctx.fillRect(px, topY + headW + bodyH, Math.max(1, Math.round(bodyW * 0.42)), legH);
           ctx.fillRect(
             px + Math.max(1, Math.round(bodyW * 0.58)),
             topY + headW + bodyH,
-            Math.max(1, Math.round(bodyW * 0.38)),
+            Math.max(1, Math.round(bodyW * 0.42)),
             legH,
           );
         }
