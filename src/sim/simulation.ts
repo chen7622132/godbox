@@ -2,8 +2,8 @@ import { Rng } from '../core/rng';
 import { makePersonName, raceOf, RACES } from '../core/races';
 import { logEvent } from '../core/events';
 import {
-  T, IS_LAND, YEARS_PER_TICK, TIER_POP, TIER_NAME, TECH_POWER,
-  type World, type Settlement, type Nation, type Agent,
+  T, IS_LAND, YEARS_PER_TICK, TIER_POP, TIER_NAME, TECH_POWER, FOOD,
+  type World, type Settlement, type Nation, type Agent, type MoodState, type StatusKind,
 } from '../core/types';
 import { findLandNear } from '../core/world';
 
@@ -12,14 +12,170 @@ const rng = new Rng(1);
 /** 一局的目标长度（tick）。15 分钟 × 10 tick/秒 = 9000 */
 export const ROUND_TICKS = 9000;
 
+/** 各族最爱的食物：人类爱谷物、精灵爱野果、矮人爱谷物、兽人爱兽肉 */
+const FAV_FOOD: number[] = [FOOD.Grain, FOOD.Berry, FOOD.Grain, FOOD.Meat];
+
+/**
+ * 按周边地形推导本城实际能吃到的「唯一主食」。
+ * 只产一种粮 —— 这正是 WorldBox「周期性情绪低落 → 外交崩盘 → 叛乱」的根源。
+ */
+function deriveFoodKind(world: World, x: number, y: number): number {
+  let water = 0;
+  let forest = 0;
+  let hill = 0;
+  let grass = 0;
+  const R = 7;
+  for (let dy = -R; dy <= R; dy++) {
+    for (let dx = -R; dx <= R; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) continue;
+      const t = world.terrain[ny * world.w + nx];
+      if (t === T.Water || t === T.Deep) water++;
+      else if (t === T.Forest) forest++;
+      else if (t === T.Hill || t === T.Mountain) hill++;
+      else if (t === T.Grass) grass++;
+    }
+  }
+  const best = Math.max(water, forest, hill, grass);
+  if (best === water) return FOOD.Fish;
+  if (best === forest) return FOOD.Berry;
+  if (best === hill) return FOOD.Meat;
+  return FOOD.Grain;
+}
+
+/** 进食间隔（tick）：一天吃几顿 */
+const MEAL_EVERY = 260;
+
+/** 情绪 → 幸福度基准值 */
+const MOOD_VALUE: Record<MoodState, number> = {
+  happy: 62,
+  normal: 5,
+  sad: -52,
+  angry: -86,
+};
+
+/**
+ * WorldBox 情绪状态机：只由「吃到什么」推导。
+ *   吃到最爱的食物      → happy
+ *   happy 再吃任何东西  → normal
+ *   normal 吃到不爱吃的 → 20% 变 sad
+ *   sad 吃到不爱吃的    → 5%  变 angry
+ */
+function eatOnce(s: Settlement): void {
+  const fav = s.foodKind === s.favFood;
+  let next: MoodState = s.mood;
+
+  if (fav) {
+    next = 'happy';
+  } else if (s.mood === 'happy') {
+    next = 'normal';
+  } else if (s.mood === 'normal') {
+    if (rng.next() < 0.2) next = 'sad';
+  } else if (s.mood === 'sad') {
+    if (rng.next() < 0.05) next = 'angry';
+  }
+
+  if (next !== s.mood) {
+    s.mood = next;
+    // 情绪切换时立刻挂一个可见状态（铁律：1 秒内必须有像素变化）
+    if (next === 'happy') setStatus(s, 'sing', 160);
+    else if (next === 'sad') setStatus(s, 'cry', 200);
+    else if (next === 'angry') setStatus(s, 'tantrum', 220);
+  }
+
+  // 幸福度向档位基准缓动
+  const target = MOOD_VALUE[s.mood];
+  s.happiness += (target - s.happiness) * 0.5;
+  if (s.happiness > 100) s.happiness = 100;
+  if (s.happiness < -100) s.happiness = -100;
+}
+
+/** 给城池挂一个可见状态 */
+function setStatus(s: Settlement, kind: StatusKind, dur: number): void {
+  s.status = kind;
+  s.statusUntil = world_tick_ref + dur;
+}
+
+/** 当前 tick 引用（供 setStatus 使用，避免层层传参） */
+let world_tick_ref = 0;
+
+/** 情绪对人口增长的乘数：快乐的人更愿意生，悲伤的人缩在家里 */
+function moodGrowthMul(m: MoodState): number {
+  if (m === 'happy') return 1.25;
+  if (m === 'sad') return 0.72;
+  if (m === 'angry') return 0.88;
+  return 1;
+}
+
+/**
+ * 情绪主循环。这条规则在眼前真实运转，「活人感」才会出现 ——
+ * 只有一个粮食来源的村子，会走完：情绪低落 → 人口流失 → 反复砸房。
+ */
+function updateMoods(world: World): void {
+  for (const s of world.settlements) {
+    if (!s.alive || s.ruin) continue;
+
+    // 旧存档兼容
+    if (s.mood === undefined) {
+      s.mood = 'normal';
+      s.happiness = 0;
+      s.foodKind = deriveFoodKind(world, s.x, s.y);
+      s.favFood = FAV_FOOD[s.race] ?? FOOD.Grain;
+      s.lastMeal = world.tick;
+      s.status = null;
+      s.statusUntil = 0;
+      s.miseryTicks = 0;
+      s.damage = 0;
+    }
+
+    // 1) 进餐：情绪只由「吃到什么」决定
+    if (world.tick - s.lastMeal >= MEAL_EVERY) {
+      s.lastMeal = world.tick;
+      eatOnce(s);
+      if (s.mood === 'sad' || s.mood === 'angry') {
+        s.miseryTicks += MEAL_EVERY;
+      } else {
+        s.miseryTicks = Math.max(0, s.miseryTicks - MEAL_EVERY * 0.5);
+      }
+    }
+
+    // 2) 状态到期自动消失
+    if (s.status && world.tick >= s.statusUntil) s.status = null;
+
+    // 3) 愤怒 → 发脾气砸房子（房子真的会变破损，俯瞰图上最明显）
+    if (s.mood === 'angry' && rng.next() < 0.018) {
+      s.damage = Math.min(1, s.damage + 0.24);
+      setStatus(s, 'tantrum', 120);
+      if (s.damage > 0.62 && rng.next() < 0.28) {
+        logEvent(world, 'war', `${s.name} 的民众暴怒，砸毁了自家房屋`, s.race, 2);
+        s.pop = Math.max(1, s.pop * 0.965);
+      }
+    }
+
+    // 4) 房屋缓慢修缮
+    if (s.damage > 0) s.damage = Math.max(0, s.damage - 0.0045);
+
+    // 5) 长期悲苦 → 人口外流（不满的人离开，比直接叛乱更稳）
+    if (s.miseryTicks > 2000 && rng.next() < 0.012) {
+      const lost = Math.max(1, s.pop * 0.06);
+      s.pop = Math.max(1, s.pop - lost);
+      s.miseryTicks = 1400;
+      logEvent(world, 'war', `${s.name} 的居民因长期饥苦而大批出走`, s.race, 2);
+    }
+  }
+}
+
 /** 每 tick 调一次（外部按 SIM_HZ 调用） */
 export function stepWorld(world: World): void {
   if (world.ended) return;
   rng.s = world.rngState;
   world.tick++;
   world.year += YEARS_PER_TICK;
+  world_tick_ref = world.tick;
 
   growSettlements(world);
+  updateMoods(world);
   if (world.tick % 3 === 0) expandTerritories(world);
   if (world.tick % 2 === 0) trySpawnSettlements(world);
   if (world.tick % 5 === 0) updateNations(world);
@@ -66,6 +222,9 @@ function growSettlements(world: World): void {
     const pressure = s.pop / Math.max(1, s.cap);
     let delta = (0.042 + s.pop * 0.0028 * race.growth * (1 - pressure))
       - s.pop * (plagueHit + fireHit);
+
+    // 情绪直接改变生育意愿：快乐的村子长得快，悲伤的村子缩在家里
+    if (delta > 0) delta *= moodGrowthMul(s.mood ?? 'normal');
 
     // 领土太小（被别国挤死）则饿死
     if (pressure > 1) delta -= s.pop * (pressure - 1) * 0.06;
@@ -222,6 +381,16 @@ export function createSettlement(
     ruin: false,
     capital: isCapital,
     lastSpawn: world.tick,
+
+    mood: 'normal',
+    happiness: 0,
+    foodKind: deriveFoodKind(world, x, y),
+    favFood: FAV_FOOD[race] ?? FOOD.Grain,
+    lastMeal: world.tick,
+    status: null,
+    statusUntil: 0,
+    miseryTicks: 0,
+    damage: 0,
   };
   world.settlements.push(s);
   world.owner[y * world.w + x] = s.id;

@@ -33,6 +33,15 @@ for (let i = 0; i < 2600; i++) {
 const live = world.settlements.filter((s) => s.alive && !s.ruin);
 console.log(`世界状态：tick=${world.tick} 城=${live.length} 国=${world.nations.filter((n) => n.alive).length}`);
 
+// 情绪系统诊断
+const moodCount = { happy: 0, normal: 0, sad: 0, angry: 0, undef: 0 };
+for (const s of live) moodCount[s.mood ?? 'undef']++;
+const withStatus = live.filter((s) => s.status).length;
+const foodKinds = {};
+for (const s of live) foodKinds[s.foodKind] = (foodKinds[s.foodKind] ?? 0) + 1;
+console.log('情绪分布', JSON.stringify(moodCount), '| 带可见状态', withStatus, '| 主食分布', JSON.stringify(foodKinds));
+console.log('最爱食物匹配数', live.filter((s) => s.foodKind === s.favFood).length, '/', live.length);
+
 const display = createCanvas(W, H);
 const r = new Renderer(display, world);
 
@@ -60,6 +69,27 @@ const big = live.reduce((a, b) => (a.pop > b.pop ? a : b), live[0]);
 await shot('art-region', 8, big.x + 0.5, big.y + 0.5);
 await shot('art-city-close', 16, big.x + 0.5, big.y + 0.5);
 await shot('art-max', 32, big.x + 0.5, big.y + 0.5);
+
+// ---- 情绪图标专项验证：强制四种情绪各截一张 ----
+async function moodShot(idx, mood, status, name) {
+  const s = live[idx];
+  if (!s) return;
+  s.mood = mood;
+  s.status = status;
+  s.statusUntil = 1e9;
+  if (mood === 'angry') s.damage = 0.85;
+  r.cam.zoom = 24;
+  r.cam.x = s.x;
+  r.cam.y = s.y;
+  r.markDirty();
+  r.camDirty = true;
+  r.render(world);
+  writeFileSync(`/tmp/${name}.png`, await display.encode('png'));
+  console.log(`  → /tmp/${name}.png  (${s.name} ${mood}/${status})`);
+}
+await moodShot(0, 'happy', 'sing', 'mood-happy');
+await moodShot(1, 'sad', 'cry', 'mood-sad');
+await moodShot(2, 'angry', 'tantrum', 'mood-angry');
 console.log(`  最大城市：${big.name} 人口 ${Math.round(big.pop)} 等级 ${big.tier} 城墙 ${big.walls}`);
 
 // 4) 城市裁切特写：把屏幕上一块区域放大 4 倍，方便看清像素级细节

@@ -84,6 +84,23 @@ export interface ChronicleEvent {
 }
 
 // ============ 聚落 ============
+/** 情绪 4 档，由「进食结果」链式推导（WorldBox 规则） */
+export type MoodState = 'happy' | 'normal' | 'sad' | 'angry';
+
+/** 食物种类 */
+export const FOOD = { Grain: 0, Fish: 1, Berry: 2, Meat: 3 } as const;
+export const FOOD_NAME = ['谷物', '鱼获', '野果', '兽肉'];
+
+/** 头顶可见状态 */
+export type StatusKind =
+  | 'sing'      // 唱歌：白色音符
+  | 'laugh'     // 大笑：白色笑脸
+  | 'curse'     // 咒骂：红色井号
+  | 'cry'       // 哭泣：蓝色水滴
+  | 'tantrum'   // 发脾气：砸房子
+  | 'love'      // 坠入爱河：粉色心
+  | 'sleep';    // 睡眠：横线
+
 export interface Settlement {
   id: number;
   x: number;
@@ -103,6 +120,26 @@ export interface Settlement {
   capital: boolean;
   /** 上次派移民建新城的 tick */
   lastSpawn: number;
+
+  // ---- 情绪系统（WorldBox 式：食物决定情绪，情绪决定行为）----
+  /** 情绪档位 */
+  mood: MoodState;
+  /** 幸福度 -100..100 */
+  happiness: number;
+  /** 本城实际能吃到的食物（由周边地形推导） */
+  foodKind: number;
+  /** 该族最爱的食物 */
+  favFood: number;
+  /** 每次进食触发情绪推演 */
+  lastMeal: number;
+  /** 当前可见状态 */
+  status: StatusKind | null;
+  /** 状态到期 tick */
+  statusUntil: number;
+  /** 连续处于负面情绪的时长（用于触发叛乱） */
+  miseryTicks: number;
+  /** 房屋破损度 0..1（发脾气砸出来的） */
+  damage: number;
 }
 
 // ============ 国家 ============

@@ -657,6 +657,26 @@ export class Renderer {
         this.drawHouse(bx, by, unit * 0.72, unit * 0.7, roof, roofDark, k % 3 === 0, k % 2 === 0);
       }
 
+      // ---- 破损：愤怒的民众砸出来的洞（情绪可视化里最直观的一种）----
+      const dmg = s.damage ?? 0;
+      if (dmg > 0.12) {
+        const hole = Math.max(2, Math.round(unit * 0.15));
+        for (let k = 0; k < houseCount; k++) {
+          if (h2(seed + 909, k) > dmg) continue;
+          const ring = k < innerCount ? 0 : 1;
+          const idx = ring === 0 ? k : k - innerCount;
+          const per = ring === 0 ? innerCount : Math.max(1, houseCount - innerCount);
+          const a = (idx / per) * Math.PI * 2 + (ring === 0 ? Math.PI / 4 : 0) + h2(seed, k) * 0.3;
+          const rr = spread * (ring === 0 ? 0.4 : 1) * (0.92 + h2(seed + 41, k) * 0.16);
+          const bx = Math.round(sx + Math.cos(a) * rr);
+          const by = Math.round(sy + Math.sin(a) * rr * 0.7);
+          ctx.fillStyle = 'rgba(16,11,7,0.86)';
+          ctx.fillRect(bx - hole, by - hole, hole * 2, hole * 2);
+          ctx.fillStyle = 'rgba(48,34,22,0.75)';
+          ctx.fillRect(bx + hole, by - hole * 2, Math.max(1, Math.round(hole / 2)), hole * 3);
+        }
+      }
+
       // ---- 农田：城外一圈小麦色条纹地块 ----
       if (s.tier >= 1) {
         const farmCount = s.tier >= 3 ? 4 : s.tier >= 2 ? 3 : 2;
@@ -788,7 +808,9 @@ export class Renderer {
 
         for (let k = 0; k < people; k++) {
           const a = (k / people) * Math.PI * 2 + h2(pseed, k) * 0.5;
-          const rr = unit * (1.95 + h2(pseed + 17, k) * 0.35);
+          // 幸福度低的人缩在家里 —— 地图上就会出现「空街」
+          const homely = (s.happiness ?? 0) < -20 ? 0.5 : 1;
+          const rr = unit * (1.95 + h2(pseed + 17, k) * 0.35) * homely;
           const px = Math.round(sx + Math.cos(a) * rr);
           const py = Math.round(sy + Math.sin(a) * rr * 0.72);
           const topY = py - headW;
@@ -814,6 +836,26 @@ export class Renderer {
             Math.max(1, Math.round(bodyW * 0.42)),
             legH,
           );
+        }
+      }
+
+      // 情绪图标：3 像素的脸画不出表情，情绪一律外化成头顶小图标
+      if (z >= 5) {
+        const mood = s.mood ?? 'normal';
+        const st = s.status;
+        const icon = st === 'sing' ? 'note'
+          : st === 'laugh' ? 'laugh'
+          : st === 'curse' ? 'hash'
+          : st === 'cry' ? 'drop'
+          : st === 'tantrum' ? 'rage'
+          : st === 'love' ? 'heart'
+          : mood === 'happy' ? 'note'
+          : mood === 'sad' ? 'drop'
+          : mood === 'angry' ? 'rage'
+          : null;
+        if (icon) {
+          const d = Math.max(6, Math.round(z * 0.8));
+          drawMoodIcon(ctx, Math.round(sx), Math.round(sy - unit * 1.15), d, icon);
         }
       }
 
@@ -945,4 +987,69 @@ function shade(rgb: [number, number, number], k: number): string {
   const g = Math.min(255, Math.round(rgb[1] * k));
   const b = Math.min(255, Math.round(rgb[2] * k));
   return `rgb(${r},${g},${b})`;
+}
+
+/**
+ * 头顶情绪图标。俯瞰尺度下这是唯一可行的情绪表达方式：
+ * 符号用 2~4 个像素块拼，配深色底衬保证在任何地形上都能看清。
+ */
+function drawMoodIcon(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  size: number,
+  kind: 'note' | 'laugh' | 'hash' | 'drop' | 'rage' | 'heart',
+): void {
+  const px = Math.max(1, Math.round(size / 4));
+  const half = Math.round((px * 4) / 2);
+
+  // 深色底衬
+  ctx.fillStyle = 'rgba(6,6,4,0.6)';
+  ctx.fillRect(cx - half - px, cy - half - px, px * 6, px * 6);
+
+  const X = (i: number) => cx - half + i * px;
+  const Y = (j: number) => cy - half + j * px;
+
+  if (kind === 'note') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(X(2), Y(0), px, px * 3);
+    ctx.fillRect(X(1), Y(0), px * 2, px);
+    ctx.fillRect(X(0), Y(1), px, px);
+  } else if (kind === 'laugh') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(X(1), Y(0), px * 2, px);
+    ctx.fillRect(X(0), Y(1), px, px * 2);
+    ctx.fillRect(X(3), Y(1), px, px * 2);
+    ctx.fillRect(X(1), Y(3), px * 2, px);
+    ctx.fillStyle = '#2a1a0c';
+    ctx.fillRect(X(1), Y(2), px, px);
+    ctx.fillRect(X(2), Y(2), px, px);
+  } else if (kind === 'hash') {
+    ctx.fillStyle = '#ff3b2a';
+    ctx.fillRect(X(1), Y(0), px, px * 4);
+    ctx.fillRect(X(2), Y(0), px, px * 4);
+    ctx.fillRect(X(0), Y(1), px * 4, px);
+    ctx.fillRect(X(0), Y(2), px * 4, px);
+  } else if (kind === 'drop') {
+    ctx.fillStyle = '#55aef0';
+    ctx.fillRect(X(1), Y(0), px * 2, px);
+    ctx.fillRect(X(1), Y(1), px * 2, px * 2);
+    ctx.fillRect(X(0), Y(2), px * 4, px);
+    ctx.fillRect(X(1), Y(3), px * 2, px);
+    ctx.fillStyle = '#cfeeff';
+    ctx.fillRect(X(1), Y(1), px, px);
+  } else if (kind === 'rage') {
+    ctx.fillStyle = '#ff3b2a';
+    ctx.fillRect(X(0), Y(0), px * 2, px);
+    ctx.fillRect(X(2), Y(1), px * 2, px);
+    ctx.fillRect(X(0), Y(2), px * 2, px);
+    ctx.fillRect(X(2), Y(3), px * 2, px);
+    ctx.fillRect(X(1), Y(1), px, px * 2);
+  } else {
+    ctx.fillStyle = '#ff6fae';
+    ctx.fillRect(X(0), Y(0), px * 2, px);
+    ctx.fillRect(X(2), Y(0), px * 2, px);
+    ctx.fillRect(X(0), Y(1), px * 4, px * 2);
+    ctx.fillRect(X(1), Y(3), px * 2, px);
+  }
 }
