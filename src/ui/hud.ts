@@ -46,6 +46,7 @@ export function buildHud(): HudApi {
         const c = document.createElement('div');
         c.className = 'race-card';
         c.style.color = r.color;
+        c.title = r.traits.join(' / ');
         c.innerHTML = `<div class="rn">${r.name}</div><div class="rp">人口 <b>0</b></div><div class="rp">城 <b>0</b></div><div class="rp nm"></div>`;
         racesEl.appendChild(c);
         cachedCards.push(c);

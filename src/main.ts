@@ -340,6 +340,17 @@ document.getElementById('btn-chron-toggle')?.addEventListener('click', () => {
   document.getElementById('chronicle')?.classList.toggle('collapsed');
 });
 
+// 编年史筛选：只看大事
+let onlyMajor = false;
+const chronFilterBtn = document.getElementById('btn-chron-filter');
+chronFilterBtn?.addEventListener('click', () => {
+  onlyMajor = !onlyMajor;
+  chronFilterBtn.classList.toggle('active', onlyMajor);
+  chronicle.setFilterImportant(onlyMajor);
+  if (world) chronicle.rebuildAll(world);
+  toast(onlyMajor ? '只看大事' : '显示全部事件');
+});
+
 // 拖拽导入存档
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {

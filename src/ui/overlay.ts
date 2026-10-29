@@ -62,13 +62,11 @@ export function showGenesis(
         <h2>种族</h2>
         <div class="race-pick" id="race-pick">
           ${RACES.map((r) => `
-            <div class="race-chip" data-race="${r.id}" style="color:${r.color}">
+            <div class="race-chip" data-race="${r.id}" style="color:${r.color}" title="${r.traits.join(' / ')}">
               <span class="dot" style="background:${r.color}"></span>${r.name}
             </div>`).join('')}
         </div>
-        <p class="hintline">
-          至少选 2 个异族才会打起来。兽人繁殖快、好战；精灵偏森林，战力强；矮人住山地，防御高。
-        </p>
+        <p class="hintline" id="race-trait-hint">点种族看它的特性</p>
 
         <div class="btn-row">
           <button class="btn-primary" id="btn-genesis">开始创世</button>
@@ -125,10 +123,21 @@ export function showGenesis(
 
     // 种族
     const pick = sheet.querySelector('#race-pick') as HTMLElement;
+    const traitHint = sheet.querySelector('#race-trait-hint') as HTMLElement;
     const syncRaces = () => {
       for (const c of Array.from(pick.querySelectorAll('.race-chip'))) {
         const id = Number((c as HTMLElement).dataset.race);
         c.classList.toggle('on', cfg.races.includes(id));
+      }
+      const picked = cfg.races.map((id) => RACES[id]).filter(Boolean);
+      if (picked.length === 0) {
+        traitHint.textContent = '至少选一个种族';
+      } else if (picked.length === 1) {
+        traitHint.innerHTML = `<b style="color:${picked[0].color}">${picked[0].name}</b> · ${picked[0].traits.join(' · ')}`;
+      } else {
+        traitHint.innerHTML = picked
+          .map((r) => `<b style="color:${r.color}">${r.name}</b> ${r.traits[0]}`)
+          .join(' ｜ ');
       }
     };
     pick.addEventListener('click', (e) => {

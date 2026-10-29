@@ -35,13 +35,20 @@ export function stepWorld(world: World): void {
 
 function settlementCap(world: World, s: Settlement): number {
   const i = s.y * world.w + s.x;
+  const t = world.terrain[i];
   const f = world.fert[i] / 255;
   const race = raceOf(s.race);
   const n = s.nation >= 0 ? world.nations[s.nation] : undefined;
   const techMul = 1 + (n ? n.tech : 0) * 0.2;
   // 严苛地形容忍：肥力低时种族特性起作用
   const effF = f < 0.5 ? f * race.harshness : f;
-  return Math.max(18, (40 + effF * 185) * techMul);
+  let cap = (40 + effF * 185) * techMul;
+
+  // 种族特性：矮人住在丘陵/山地时挖出地下空间；精灵的森林家园更宽敞
+  if (race.mineBonus > 0 && (t === T.Hill || t === T.Mountain)) cap *= 1 + race.mineBonus;
+  if (race.forestPower > 1 && t === T.Forest) cap *= 1.2;
+
+  return Math.max(18, cap);
 }
 
 function growSettlements(world: World): void {
@@ -75,7 +82,7 @@ function growSettlements(world: World): void {
     }
     // 城墙（科技到 3 级后逐步修建）
     const tech = s.nation >= 0 ? world.nations[s.nation].tech : 0;
-    const wantWalls = tech >= 3 ? Math.min(3, tech - 2) : 0;
+    const wantWalls = tech >= 3 ? Math.min(4, tech - 2 + race.wallBonus) : 0;
     if (s.walls < wantWalls && s.pop > 60) s.walls++;
 
     // 人口归零 → 城市废弃
@@ -152,13 +159,27 @@ function trySpawnSettlements(world: World): void {
     if (!rng.chance(0.08)) continue;
 
     const race = raceOf(s.race);
-    const spot = findLandNear(world, s.x + rng.intRange(-26, 26), s.y + rng.intRange(-26, 26), 12, (i) => {
+    const ox = s.x + rng.intRange(-26, 26);
+    const oy = s.y + rng.intRange(-26, 26);
+    // 第一轮：只要本族的偏好地形（这样精灵真的住森林、矮人真的住山区）
+    let spot = findLandNear(world, ox, oy, 12, (i) => {
       const t = world.terrain[i];
-      return IS_LAND[t] && (race.pref.includes(t) || t === T.Grass || t === T.Hill);
+      if (!IS_LAND[t]) return false;
+      if (race.pref.includes(t)) return true;
+      return race.buildHarsh && (t === T.Mountain || t === T.Snow);
     });
+    // 第二轮：附近实在没有偏好地形，退而求其次
+    if (spot < 0) {
+      spot = findLandNear(world, ox, oy, 12, (i) => {
+        const t = world.terrain[i];
+        return IS_LAND[t] && (t === T.Grass || t === T.Hill || t === T.Sand);
+      });
+    }
     if (spot < 0) continue;
     const picked = world.settlements.filter((o) => o.alive).length;
-    if (picked > 32) continue;
+    // 城数上限随在场种族数放大：2 族约 28 城，4 族约 44 城
+    const activeRaces = new Set(world.settlements.filter((o) => o.alive).map((o) => o.race)).size;
+    if (picked > 12 + 8 * Math.max(2, activeRaces)) continue;
 
     const nx = spot % world.w;
     const ny = (spot / world.w) | 0;
@@ -241,7 +262,18 @@ function updateNations(world: World): void {
 
     // 科技
     if (n.tech < 6) {
-      n.techProgress += totalPop * 0.0003 * race.tech;
+      // 矮人特性：城市越多建在丘陵/山地，矿脉带来的研究加成越高
+      let mineCities = 0;
+      for (const id of n.cities) {
+        const s = world.settlements[id];
+        if (!s || !s.alive) continue;
+        const t = world.terrain[s.y * world.w + s.x];
+        if (t === T.Hill || t === T.Mountain) mineCities++;
+      }
+      const mineMul = race.mineBonus > 0 && n.cities.length > 0
+        ? 1 + (mineCities / n.cities.length) * race.mineBonus
+        : 1;
+      n.techProgress += totalPop * 0.0003 * race.tech * mineMul;
       if (n.techProgress >= 100) {
         n.techProgress = 0;
         n.tech++;
@@ -259,6 +291,37 @@ function updateNations(world: World): void {
         king.alive = false;
         logEvent(world, 'death', `${n.name} 的国王 ${king.name} 去世，享年 ${Math.round(king.age)} 岁`, n.race, 1);
         appointKing(world, n);
+      }
+    }
+  }
+
+  // 3) 霸主巩固：城市数过半的国家每 200 tick 吸收一个邻近的独立聚落
+  if (world.tick > 0 && world.tick % 200 === 0) {
+    const liveCities = world.settlements.filter((s) => s.alive && !s.ruin);
+    if (liveCities.length >= 4) {
+      for (const n of world.nations) {
+        if (!n.alive) continue;
+        if (n.cities.length < liveCities.length * 0.6) continue;
+        const free = liveCities.filter((s) => s.nation < 0);
+        if (!free.length) break;
+        const c = nationCenter(world, n);
+        let best: Settlement | null = null;
+        let bestD = Infinity;
+        for (const s of free) {
+          const d = Math.hypot(s.x - c.x, s.y - c.y);
+          if (d < bestD) { bestD = d; best = s; }
+        }
+        if (!best || bestD > 140) continue;
+        best.nation = n.id;
+        best.capital = false;
+        n.cities.push(best.id);
+        stampNation(world, best.id, n.id);
+        logEvent(
+          world, 'conquer',
+          `${best.name} 向 ${n.name} 称臣，${raceOf(best.race).name}再无力自立`,
+          best.race, 2,
+        );
+        break;
       }
     }
   }
@@ -429,14 +492,27 @@ function declareWar(world: World, a: Nation, b: Nation): void {
 function nationPower(world: World, n: Nation, attacking: boolean): number {
   const race = raceOf(n.race);
   let pop = 0;
+  let forestCities = 0;
+  let alive = 0;
   for (const id of n.cities) {
     const s = world.settlements[id];
-    if (s && s.alive) pop += s.pop;
+    if (s && s.alive) {
+      pop += s.pop;
+      alive++;
+      if (world.terrain[s.y * world.w + s.x] === T.Forest) forestCities++;
+    }
   }
   const king = world.agents[n.king];
   const talent = king && king.alive ? king.talent : 0.8;
   const base = pop * (attacking ? 0.105 : 0.125);
-  return base * race.power * TECH_POWER[n.tech] * talent;
+  let power = base * race.power * TECH_POWER[n.tech] * talent;
+
+  // 精灵：城市越多建在森林里，全体战力越强（在家门口打仗）
+  if (race.forestPower > 1 && alive > 0) {
+    const ratio = forestCities / alive;
+    power *= 1 + (race.forestPower - 1) * ratio;
+  }
+  return power;
 }
 
 function resolveCampaigns(world: World): void {
@@ -519,10 +595,16 @@ function conquer(world: World, a: Nation, b: Nation, target: Settlement, attacke
   if (!a.cities.includes(target.id)) a.cities.push(target.id);
   a.warsWon++;
 
+  // 攻下一座城需要时间消化：驻军、清剿、安民，这段时间无法再发动攻势
+  a.lastCampaign = world.tick + 60;
+
   // 雪球效应（克制版）：守方士气受损，攻方也因长期战争消耗难以全力扩张
+  const loserRace = raceOf(b.race);
   for (const id of b.cities) {
     const s = world.settlements[id];
-    if (s && s.alive) s.pop *= 0.965;
+    if (!s || !s.alive) continue;
+    // 兽人特性：丢城反而被激怒，残余人手全体动员
+    s.pop *= loserRace.rageGrowth > 0 ? 1 + loserRace.rageGrowth : 0.965;
   }
   for (const id of a.cities) {
     const s = world.settlements[id];
@@ -674,13 +756,13 @@ function updateStats(world: World): void {
   world.stats.popHistory.push([world.tick, Math.round(total)]);
   if (world.stats.popHistory.length > 400) world.stats.popHistory.shift();
 
-  // 终局：单一国家控制所有存活城市
+  // 终局：只有一个国家，且它控制了绝大部分城市（剩下的零星部落算臣服）
   const aliveNations = world.nations.filter((n) => n.alive);
   const cities = world.settlements.filter((s) => s.alive && !s.ruin);
   if (cities.length >= 3 && aliveNations.length === 1) {
     const only = aliveNations[0];
-    const allMine = cities.every((s) => s.nation === only.id);
-    if (allMine) {
+    const owned = cities.filter((s) => s.nation === only.id).length;
+    if (owned / cities.length >= 0.75) {
       world.ended = true;
       world.endReason = `${only.name} 统一了世界`;
       logEvent(world, 'unify', `${only.name} 统一了已知世界，${only.name}的时代开始了`, only.race, 2);

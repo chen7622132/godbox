@@ -5,6 +5,9 @@
 
 ![tech](https://img.shields.io/badge/TypeScript-Canvas2D-3178c6) ![license](https://img.shields.io/badge/license-MIT-green)
 
+**▶ 在线直接玩：[https://chen7622132.github.io/godbox/](https://chen7622132.github.io/godbox/)**
+
+
 ---
 
 ## 一、三种玩法，选一种
@@ -49,6 +52,17 @@ git push -u origin main
 ---
 
 ## 二、怎么玩
+
+### 四族特性（v1.1 起，四族不再是换皮）
+
+| 种族 | 住哪 | 特性 | 怎么对付它 |
+|---|---|---|---|
+| **人类** | 草原 / 沙地 / 森林 | 城墙修得早（+1 级）、科技最快、什么地形都能活 | 早期不压制，后期会被科技碾压 |
+| **精灵** | **只住森林 / 雪原** | 城市越多建在森林里，战力越高（最高 ×1.55）；繁殖慢、寿命极长 | 烧它的森林 = 直接废掉它一半战力 |
+| **矮人** | **只住丘陵 / 山地** | 能在山地建城（其他族不行）；丘陵城市容量 ×1.35；挖矿加速科技 | 地形硬，攻坚成本高，但它扩张慢 |
+| **兽人** | 草原 / 沼泽 / 沙地 / 丘陵 | 繁殖极快、侵略性最高；**丢了城之后人口反而反弹** | 打它别只打一座城，要一次打崩 |
+
+> 实测：四族同场时，精灵 8 座城有 7 座在森林、矮人 9 座有 7 座在丘陵——地形偏好是真的生效，不是文案。
 
 ### 操作
 
@@ -110,9 +124,10 @@ git push -u origin main
 | 一局多长 | `src/sim/simulation.ts` | `ROUND_TICKS = 9000` |
 | 人口长多快 | `src/sim/simulation.ts` | `growSettlements()` 里 `0.042 + pop * 0.0028` |
 | 城市容量 | `src/sim/simulation.ts` | `settlementCap()` 里 `40 + effF * 185` |
-| 最多几座城 | `src/sim/simulation.ts` | `if (picked > 32)` |
-| 建国门槛 | `src/sim/simulation.ts` | `if (leader.pop < 130)` |
-| 多久打一仗 | `src/sim/simulation.ts` | `resolveCampaigns()` 里 `< 45` |
+| 最多几座城 | `src/sim/simulation.ts` | `if (picked > 12 + 8 * activeRaces)`（随族数自动放大） |
+| 建国门槛 | `src/sim/simulation.ts` | `if (leader.pop < 115)` |
+| 新国和平期 | `src/sim/simulation.ts` | `world.year - a.founded < 900` |
+| 多久打一仗 | `src/sim/simulation.ts` | `resolveCampaigns()` 里 `< 60` |
 | 攻守强弱 | `src/sim/simulation.ts` | `nationPower()` 里 `0.105 / 0.125` |
 | 同盟触发线 | `src/sim/simulation.ts` | 城市数过半 `* 0.5` |
 | 种族平衡 | `src/core/races.ts` | 每个种族的 `growth / power / tech / aggression` |
