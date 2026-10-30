@@ -9,6 +9,26 @@ function lattice(rng: Rng, gw: number, gh: number): Float32Array {
   return a;
 }
 
+/** 单点值噪声：给地形边缘加扰动用（0..1） */
+function vnoise(x: number, y: number, seed: number): number {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const xf = x - xi;
+  const yf = y - yi;
+  const h = (a: number, b: number) => {
+    let n = Math.imul(a * 374761393 + b * 668265263 + seed * 1442695041, 1274126177);
+    n = n ^ (n >>> 13);
+    return ((n >>> 0) % 100000) / 100000;
+  };
+  const u = xf * xf * (3 - 2 * xf);
+  const v = yf * yf * (3 - 2 * yf);
+  const a = h(xi, yi);
+  const b = h(xi + 1, yi);
+  const c = h(xi, yi + 1);
+  const d = h(xi + 1, yi + 1);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
+
 function smooth(t: number): number {
   return t * t * (3 - 2 * t);
 }
@@ -127,12 +147,28 @@ export function generateWorld(opt: WorldGenOptions): World {
         ter = T.Sand;
       } else if (hn < 0.5) {
         if (m > 0.58 && hn < 0.26) ter = T.Swamp;
-        else if (m > 0.46) ter = T.Forest;
-        else ter = T.Grass;
+        else {
+          // 森林边界用域扭曲打散：硬阈值会让林缘变成一条「刀切线」
+          const warp = (vnoise(x * 0.22, y * 0.22, 91) - 0.5) * 0.16;
+          const mw = m + warp;
+          if (mw > 0.5) {
+            ter = T.Forest;
+            // 林间空地：森林内部偶尔露出一块草地，林子才有呼吸
+            if (vnoise(x * 0.33, y * 0.33, 77) > 0.74) ter = T.Grass;
+          } else if (mw > 0.43) {
+            // 林缘：树疏一半，形成自然过渡带
+            ter = vnoise(x * 0.55, y * 0.55, 33) > 0.48 ? T.Forest : T.Grass;
+          } else {
+            ter = T.Grass;
+          }
+        }
       } else if (hn < 0.7) {
         ter = T.Grass;
       } else if (hn < 0.85) {
-        ter = T.Hill;
+        // 丘陵：单靠高度阈值会形成「等高线环」，看起来很假。
+        // 用山脊噪声（1-|2n-1|）让它连成一条条山脊，才有山脉的走向。
+        const ridge = 1 - Math.abs(vnoise(x * 0.055, y * 0.055, 55) * 2 - 1);
+        ter = (ridge > 0.76 || hn > 0.81) ? T.Hill : T.Grass;
       } else if (hn < 0.95) {
         ter = T.Mountain;
       } else {
@@ -172,7 +208,7 @@ export function generateWorld(opt: WorldGenOptions): World {
   cleanupIslands(terrain, w, h);
 
   // 开凿河流：从丘陵/山地一路流到海里
-  carveRivers(terrain, fert, w, h, rng, Math.max(7, Math.round((w * h) / 5200)));
+  carveRivers(terrain, fert, w, h, rng, Math.max(16, Math.round((w * h) / 900)));
   // 点缀湖泊：低洼处积水，让水系看起来完整
   carveLakes(terrain, fert, w, h, rng, Math.max(10, Math.round((w * h) / 1600)));
 
@@ -297,8 +333,8 @@ function carveRivers(
       terrain[i] = T.Water;
       fert[i] = 130;
 
-      // 河宽 1-2 格：随机往一侧再啃一格，形成宽窄变化
-      if (rng.chance(0.5)) {
+      // 河宽 2-3 格：太细的河在俯瞰下就是一条看不见的线
+      if (rng.chance(0.92)) {
         const side: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
         const [dx, dy] = side[rng.int(4)];
         const nx = x + dx;
