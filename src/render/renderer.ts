@@ -376,6 +376,27 @@ export class Renderer {
             let s = 1 + grain;
             s *= cliff;
 
+            // ---- 水面：波纹 + 岸边泡沫（WorldBox 的水不是纯色块）----
+            if (!IS_LAND[t]) {
+              // 缓慢移动的横向波纹：每 3px 一条微亮线
+              const bandH = Math.max(2, Math.round(T2 / 4));
+              const wave = Math.sin((y * 3 + py) * 0.5 + x * 0.7 + world.tick * 0.03);
+              if (py % bandH === 0) s *= 1.1 + wave * 0.06;
+              else if (py % bandH === bandH - 1) s *= 0.95;
+              // 深水更深、浅水更亮，形成深度感
+              if (t === T.Deep) s *= 0.9;
+              // 岸边泡沫：四个方向贴陆都算，画 2px 宽的亮边
+              const fw = Math.max(1, Math.round(T2 * 0.09));
+              const nbU = y > 0 ? terrain[i - w] : t;
+              const nbD = y + 1 < h ? terrain[i + w] : t;
+              const nbL = x > 0 ? terrain[i - 1] : t;
+              const nbR = x + 1 < w ? terrain[i + 1] : t;
+              if ((IS_LAND[nbU] && py < fw) || (IS_LAND[nbD] && py >= T2 - fw)
+                  || (IS_LAND[nbL] && px < fw) || (IS_LAND[nbR] && px >= T2 - fw)) {
+                s *= 1.42;
+              }
+            }
+
             let cr: number;
             let cg: number;
             let cb: number;

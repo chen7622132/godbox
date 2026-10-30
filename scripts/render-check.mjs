@@ -94,6 +94,41 @@ await moodShot(0, 'happy', 'sing', 'mood-happy');
 await moodShot(1, 'sad', 'cry', 'mood-sad');
 await moodShot(2, 'angry', 'tantrum', 'mood-angry');
 
+// 地形取样：自动找一块地形最丰富的位置
+{
+  let best = null, bestN = 0;
+  for (let y = 10; y < world.h - 10; y += 4) {
+    for (let x = 10; x < world.w - 10; x += 4) {
+      const kinds = new Set();
+      let water = 0;
+      for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++) {
+        const tt = world.terrain[(y + dy) * world.w + (x + dx)];
+        kinds.add(tt);
+        if (tt === 0 || tt === 1) water++;
+      }
+      if (water < 20) continue;
+      // 排除城内
+      const inTown = world.settlements.some((sc) => sc.alive && Math.hypot(sc.x - x, sc.y - y) < 5);
+      if (inTown) continue;
+      if (kinds.size > bestN) { bestN = kinds.size; best = { x, y }; }
+    }
+  }
+  if (best) {
+    const { loadImage } = await import('@napi-rs/canvas');
+    r.cam.zoom = 40; r.cam.x = best.x + 0.5; r.cam.y = best.y + 0.5;
+    r.markDirty(); r.camDirty = true; r.render(world);
+    const fullT = await display.encode('png');
+    const imgT = await loadImage(fullT);
+    const tw = 420, th = 420;
+    const cT = createCanvas(tw, th);
+    const gT = cT.getContext('2d');
+    gT.imageSmoothingEnabled = false;
+    gT.drawImage(imgT, (1200 - tw) / 2, (800 - th) / 2, tw, th, 0, 0, tw, th);
+    writeFileSync('/tmp/terrain.png', cT.toBuffer('image/png'));
+    console.log('  → /tmp/terrain.png  (地形种类 ' + bestN + ' 种)');
+  }
+}
+
 // 四族城池特写
 const { loadImage } = await import('@napi-rs/canvas');
 const RACE_CN = ['人类', '精灵', '矮人', '兽人'];
