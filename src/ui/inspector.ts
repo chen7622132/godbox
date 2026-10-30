@@ -1,5 +1,19 @@
-import { TERRAIN_NAME, TIER_NAME, TECH_NAME, type World } from '../core/types';
+import { TERRAIN_NAME, TIER_NAME, TECH_NAME, FOOD_NAME, type World } from '../core/types';
 import { RACES } from '../core/races';
+
+/** 民情文案与配色 */
+const MOOD_TXT: Record<string, string> = {
+  happy: '欢欣',
+  normal: '平静',
+  sad: '悲苦',
+  angry: '暴怒',
+};
+const MOOD_COL: Record<string, string> = {
+  happy: '#8cdc6a',
+  normal: '#9aa4b2',
+  sad: '#5aaef0',
+  angry: '#ff5a3c',
+};
 
 export class Inspector {
   private el: HTMLElement;
@@ -63,7 +77,7 @@ export class Inspector {
     if (!s || !s.alive || s.ruin) { this.hide(); return; }
     const race = RACES[s.race];
     const n = s.nation >= 0 ? world.nations[s.nation] : undefined;
-    const sig = `s${sid}|${Math.round(s.pop)}|${s.tier}|${s.walls}|${s.nation}|${n ? n.tech : 0}|${n ? n.enemies.length : 0}`;
+    const sig = `s${sid}|${Math.round(s.pop)}|${s.tier}|${s.walls}|${s.nation}|${n ? n.tech : 0}|${n ? n.enemies.length : 0}|${s.mood}|${s.happiness ? Math.round(s.happiness) : 0}|${n ? n.king : -1}`;
     if (sig === this.sig) return;
     this.sig = sig;
     const king = n ? world.agents[n.king] : undefined;
@@ -104,6 +118,47 @@ export class Inspector {
         rows.push(row('交战', `<span style="color:#e0553f">${enemies}</span>`));
       } else {
         rows.push(row('交战', '无'));
+      }
+    }
+
+    // ---- 民情：情绪系统是核心机制，玩家必须能在界面上看见 ----
+    const mood = s.mood ?? 'normal';
+    rows.push('<div class="sep"></div>');
+    rows.push(
+      row('民情', `<span style="color:${MOOD_COL[mood] ?? '#9aa4b2'}">${MOOD_TXT[mood] ?? '平静'}</span>` +
+        `<span style="color:#6a7684;font-size:10px"> · 幸福度 ${Math.round(s.happiness ?? 0)}</span>`),
+    );
+    const fav = s.foodKind === s.favFood;
+    rows.push(
+      row('主食', `${FOOD_NAME[s.foodKind ?? 0]}<span style="color:#6a7684"> · </span><span style="color:${fav ? '#8cdc6a' : '#e0863f'}">${fav ? '合口' : '不合口'}</span>`),
+    );
+    if ((s.damage ?? 0) > 0.15) {
+      rows.push(row('房屋', `<span style="color:#e0863f">破损 ${Math.round((s.damage ?? 0) * 100)}%</span>`));
+    }
+
+    // ---- 历代君主：把「人」摆到界面里，历史才有主角 ----
+    if (n) {
+      const kings = world.agents.filter((a) => a.nation === n.id && a.role === 'king');
+      if (kings.length >= 1) {
+        rows.push('<div class="sep"></div>');
+        rows.push(`<div class="sec-title">${kings.length > 1 ? '历代君主' : '开国之君'}</div>`);
+        const recent = kings.slice(-5).reverse();
+        for (const k of recent) {
+          const line = k.diedYear
+            ? `在位 ${Math.round(k.reign)} 年`
+            : `在位 ${Math.round(k.reign)} 年 · 今上`;
+          const deeds = k.deeds.slice(-2).map((d) => d.text).join('；');
+          rows.push(
+            `<div class="king-row">
+              <div class="kr-head">
+                <span class="kn">${k.name}</span>
+                ${k.epithet ? `<span class="ke">「${k.epithet}」</span>` : ''}
+                <span class="ks">${line}</span>
+              </div>
+              ${deeds ? `<div class="kd">${deeds}</div>` : ''}
+            </div>`,
+          );
+        }
       }
     }
     this.el.innerHTML = `<button class="mini close" style="position:absolute;top:6px;right:6px">✕</button>${rows.join('')}`;

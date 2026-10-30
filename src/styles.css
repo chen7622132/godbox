@@ -325,6 +325,35 @@ html, body {
 #inspector .row span:first-child { color: var(--dim); }
 #inspector .row span:last-child { color: var(--text); font-variant-numeric: tabular-nums; }
 #inspector .sep { height: 1px; background: var(--line-soft); margin: 7px 0; }
+
+/* ---- 历代君主 ---- */
+#inspector .sec-title {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--gold);
+  opacity: 0.85;
+  margin: 2px 0 5px;
+}
+#inspector .king-row {
+  padding: 3px 0 4px 7px;
+  border-left: 1px solid rgba(255, 212, 71, 0.22);
+  margin-bottom: 3px;
+}
+#inspector .kr-head {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+#inspector .kn { color: #e8e2d0; font-weight: 600; }
+#inspector .ke { color: #c9a94a; font-size: 10.5px; }
+#inspector .ks { color: #6a7684; font-size: 10px; margin-left: auto; }
+#inspector .kd {
+  color: #8d98a8;
+  font-size: 10px;
+  line-height: 1.45;
+  margin-top: 1px;
+}
 #inspector .tag {
   display: inline-block;
   padding: 0 5px;

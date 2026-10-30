@@ -811,7 +811,7 @@ function declareWar(world: World, a: Nation, b: Nation): void {
     );
     ka.ambition = 'revenge';
     a.grudge[b.id] = 0; // 一次清算
-    ka.deeds.push({ year: Math.round(world.year), text: `为 ${grandNum(grudge)} 条人命，举兵伐 ${b.name}`, weight: 2 });
+    ka.deeds.push({ year: Math.round(world.year), text: `为 ${b.name} 所杀之 ${grandNum(grudge)} 复仇，举兵伐之`, weight: 2 });
   } else {
     const reason = narrator.warReason(ka?.traits ?? ['好战']);
     logEvent(
