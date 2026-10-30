@@ -9,7 +9,7 @@ import {
 import { Narrator, grandNum } from '../core/narrative';
 import { updateBeasts, maybeAwakenBeast } from './beasts';
 import { updateWonders, wonderBuff } from './wonders';
-import { updateUnits, syncUnitsToCities } from './units';
+import { updateUnits, syncUnitsToCities, spawnBattle, endBattles } from './units';
 import { findLandNear } from '../core/world';
 
 const rng = new Rng(1);
@@ -214,6 +214,7 @@ export function stepWorld(world: World): void {
   if (world.tick % 40 === 0) updateWonders(world);
   updateUnits(world);
   syncUnitsToCities(world);
+  endBattles(world);
   if (world.tick % 3 === 0) expandTerritories(world);
   if (world.tick % 2 === 0) trySpawnSettlements(world);
   if (world.tick % 5 === 0) updateNations(world);
@@ -1010,6 +1011,7 @@ function resolveCampaigns(world: World): void {
       const kb = world.agents[b.king]?.name ?? '守将';
 
       if (atk > defense) {
+        spawnBattle(world, target.id, a.race, a.id, true);
         conquer(world, a, b, target, ka);
         const ak = world.agents[a.king];
         if (ak) ak.warsWon++;
@@ -1020,6 +1022,7 @@ function resolveCampaigns(world: World): void {
           if (s && s.alive) s.pop *= 0.945;
         }
         a.warsLost++;
+        spawnBattle(world, target.id, a.race, a.id, false);
         const ak = world.agents[a.king];
         if (ak) {
           ak.warsLost++;

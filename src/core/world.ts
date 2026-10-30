@@ -195,6 +195,7 @@ export function generateWorld(opt: WorldGenOptions): World {
     beasts: [],
     wonders: [],
     units: [],
+    battles: [],
     events: [],
     stats: {
       warsDeclared: 0,

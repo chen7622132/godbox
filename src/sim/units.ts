@@ -108,9 +108,25 @@ function workSpot(world: World, u: Unit, rng: Rng): { x: number; y: number } {
 export function updateUnits(world: World): void {
   const rng = new Rng(world.rngState ^ 0x2b17);
 
+  const fights = world.battles ?? [];
   for (const u of world.units) {
-    // 战斗中由战斗逻辑接管移动
-    if (u.state === 'fight') continue;
+    // 站在战场上就打 —— 不管它原本在干什么
+    if (u.job === 'soldier' && fights.length) {
+      for (const bg of fights) {
+        if (Math.hypot(u.x - bg.x, u.y - bg.y) < 7) {
+          u.state = 'fight';
+          u.timer = 2;
+          break;
+        }
+      }
+    }
+    if (u.state === 'fight') {
+      // 交战：原地小幅度抖动，像在互砍
+      u.anim++;
+      u.x += (rng.next() - 0.5) * 0.05;
+      u.y += (rng.next() - 0.5) * 0.05;
+      continue;
+    }
 
     u.anim++;
 
@@ -180,4 +196,113 @@ export function syncUnitsToCities(world: World): void {
     if (!s.alive || s.ruin) dead.add(s.id);
   }
   if (dead.size) world.units = world.units.filter((u) => !dead.has(u.home));
+}
+
+// ============ 战场 ============
+
+/** 一支正在交战的部队 */
+export interface BattleGroup {
+  /** 攻方单位 id */
+  attackers: number[];
+  /** 守方单位 id */
+  defenders: number[];
+  /** 战场中心 */
+  x: number;
+  y: number;
+  /** 结束 tick */
+  until: number;
+  /** 败方国家 id（收场时这些士兵倒下） */
+  loserNation: number;
+}
+
+/**
+ * 在一座城下生成一场可视化的战斗。
+ *
+ * 关键取舍：胜负早已由战役数值判定，这里只负责「把它演出来」——
+ * 攻方从城外冲进去，守方在城里迎击，两边真的短兵相接、真的倒下。
+ */
+export function spawnBattle(
+  world: World,
+  target: number,
+  attackerRace: number,
+  attackerNation: number,
+  decideWin: boolean,
+): void {
+  const city = world.settlements[target];
+  if (!city) return;
+
+  const rng = new Rng((world.tick * 131 + target * 17) ^ 0x7c3a);
+  const nAtk = 7 + rng.int(6);
+  const nDef = 5 + rng.int(5);
+
+  // 攻方：从城的一侧冲进来
+  const ang = rng.next() * Math.PI * 2;
+  for (let i = 0; i < nAtk; i++) {
+    const a = ang + (rng.next() - 0.5) * 0.8;
+    const r = 4.5 + rng.next() * 2;
+    world.units.push({
+      id: world.units.length,
+      race: attackerRace,
+      job: 'soldier',
+      nation: attackerNation,
+      home: target,
+      x: city.x + 0.5 + Math.cos(a) * r,
+      y: city.y + 0.5 + Math.sin(a) * r * 0.8,
+      tx: city.x + 0.5,
+      ty: city.y + 0.5,
+      state: 'fight',
+      timer: 90,
+      anim: rng.int(8),
+      hp: 100,
+      dir: 2,
+    });
+  }
+
+  // 守方：在城内列阵
+  for (let i = 0; i < nDef; i++) {
+    const a = rng.next() * Math.PI * 2;
+    const r = 0.6 + rng.next() * 1.8;
+    world.units.push({
+      id: world.units.length,
+      race: city.race,
+      job: 'soldier',
+      nation: city.nation,
+      home: target,
+      x: city.x + 0.5 + Math.cos(a) * r,
+      y: city.y + 0.5 + Math.sin(a) * r * 0.8,
+      tx: city.x + 0.5,
+      ty: city.y + 0.5,
+      state: 'fight',
+      timer: 90,
+      anim: rng.int(8),
+      hp: 100,
+      dir: 0,
+    });
+  }
+
+  world.battles = world.battles ?? [];
+  world.battles.push({
+    attackers: [],
+    defenders: [],
+    x: city.x,
+    y: city.y,
+    until: world.tick + 110,
+    loserNation: decideWin ? city.nation : attackerNation,
+  });
+}
+
+/** 战斗结束：败方单位倒下 */
+export function endBattles(world: World): void {
+  if (!world.battles?.length) return;
+  world.battles = world.battles.filter((bg) => {
+    if (world.tick < bg.until) return true;
+    // 败方倒在战场上，胜方留下驻守
+    world.units = world.units.filter((u) => {
+      if (u.job !== 'soldier') return true;
+      const d = Math.hypot(u.x - bg.x, u.y - bg.y);
+      if (d > 7) return true;
+      return u.nation !== bg.loserNation;
+    });
+    return false;
+  });
 }

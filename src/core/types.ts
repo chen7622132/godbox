@@ -389,6 +389,7 @@ export interface World {
   beasts: Beast[];
   wonders: Wonder[];
   units: Unit[];
+  battles: { attackers: number[]; defenders: number[]; x: number; y: number; until: number; loserNation: number }[];
   events: ChronicleEvent[];
   stats: Stats;
   // ---- 流程 ----

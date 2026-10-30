@@ -117,6 +117,27 @@ for (let ri = 0; ri < 4; ri++) {
   console.log('  → /tmp/city-r' + ri + '.png  (' + RACE_CN[ri] + ' ' + c.name + ')');
 }
 
+// 战斗特写：在城下打一场
+{
+  const { spawnBattle, updateUnits } = await import('../src/sim/units.ts');
+  const city = live.sort((a, b) => b.pop - a.pop)[0];
+  spawnBattle(world, city.id, 0, 1, true);
+  for (let i = 0; i < 10; i++) { world.tick++; updateUnits(world); }
+  r.cam.zoom = 22;
+  r.cam.x = city.x + 0.5;
+  r.cam.y = city.y + 0.5;
+  r.markDirty(); r.camDirty = true; r.render(world);
+  const full2 = await display.encode('png');
+  const img2 = await loadImage(full2);
+  const cw2 = 500, ch2 = 440;
+  const c3 = createCanvas(cw2, ch2);
+  const g3 = c3.getContext('2d');
+  g3.imageSmoothingEnabled = false;
+  g3.drawImage(img2, (1200 - cw2) / 2, (800 - ch2) / 2, cw2, ch2, 0, 0, cw2, ch2);
+  writeFileSync('/tmp/battle.png', c3.toBuffer('image/png'));
+  console.log('  → /tmp/battle.png  (' + city.name + ' 城下交战)');
+}
+
 // 单位特写：强制摆放 4 族 × 3 职业 = 12 个样本
 const spot = live[0];
 const demo = [];
