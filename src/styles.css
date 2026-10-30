@@ -347,6 +347,7 @@ html, body {
 }
 #inspector .kn { color: #e8e2d0; font-weight: 600; }
 #inspector .ke { color: #c9a94a; font-size: 10.5px; }
+#inspector .kp { color: #a8785a; font-size: 10px; border: 1px solid rgba(168,120,90,0.4); padding: 0 3px; border-radius: 2px; }
 #inspector .ks { color: #6a7684; font-size: 10px; margin-left: auto; }
 #inspector .kd {
   color: #8d98a8;
@@ -604,4 +605,40 @@ input[type="text"]:focus, input[type="number"]:focus { outline: 1px solid var(--
   .sheet { padding: 16px 14px 18px; }
   .field-row > label { flex: 0 0 62px; }
   #toast { bottom: 100px; font-size: 11px; }
+}
+
+/* ================= 史册之最（终局） ================= */
+.legend-board {
+  border: 1px solid var(--line-soft);
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  background: rgba(255, 212, 71, 0.03);
+}
+.legend-board .lb-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.legend-board .lb-k {
+  flex: 0 0 76px;
+  color: var(--gold);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  opacity: 0.9;
+}
+.legend-board .lb-v { color: #e8e2d0; }
+.legend-board .lb-sub { color: #8d98a8; font-size: 11px; }
+
+/* 列表底部：把空白变成叙事的一部分 */
+#chronicle-list::after {
+  content: '—— 更早之事，已不可考 ——';
+  display: block;
+  text-align: center;
+  color: #39445a;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  padding: 16px 0 8px;
 }

@@ -153,6 +153,7 @@ export class Inspector {
               <div class="kr-head">
                 <span class="kn">${k.name}</span>
                 ${k.epithet ? `<span class="ke">「${k.epithet}」</span>` : ''}
+                ${k.posthumous ? `<span class="kp">谥${k.posthumous}</span>` : ''}
                 <span class="ks">${line}</span>
               </div>
               ${deeds ? `<div class="kd">${deeds}</div>` : ''}

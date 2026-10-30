@@ -214,6 +214,48 @@ export function showEnding(overlay: HTMLElement, world: World): Promise<EndingRe
     }).join('');
 
     const major = world.events.filter((e) => e.level >= 2).slice(-6).reverse();
+
+    // ---- 史册之最：这一世最值得记住的人与事 ----
+    const legendScore = (a: typeof world.agents[number]) =>
+      a.citiesTaken * 4 + a.warsWon * 3 + a.popSlain / 300 + a.citiesFounded * 2;
+    const kings = world.agents.filter((a) => a.role === 'king');
+    const topKing = [...kings].sort((a, b) => legendScore(b) - legendScore(a))[0];
+    const longReign = [...kings].sort((a, b) => b.reign - a.reign)[0];
+    const slainTotal = world.beasts.reduce((s, b) => s + b.kills, 0);
+    const razedTotal = world.beasts.reduce((s, b) => s + b.razed, 0);
+    const gens = kings.length;
+
+    const line = (k: string, v: string) =>
+      `<div class="lb-row"><span class="lb-k">${k}</span><span class="lb-v">${v}</span></div>`;
+
+    let legendHtml = '';
+    if (topKing && legendScore(topKing) > 0) {
+      legendHtml += line(
+        '功业最盛者',
+        `${topKing.name}${topKing.epithet ? `「${topKing.epithet}」` : ''}` +
+        `${topKing.posthumous ? ` 谥${topKing.posthumous}` : ''}` +
+        `<span class="lb-sub"> 拔城 ${topKing.citiesTaken} · 胜战 ${topKing.warsWon} · 屠戮 ${Math.round(topKing.popSlain)}</span>`,
+      );
+    }
+    if (longReign && longReign.reign > 0) {
+      legendHtml += line(
+        '在位最久者',
+        `${longReign.name}<span class="lb-sub"> 在位 ${Math.round(longReign.reign)} 年${
+          longReign.warsWon + longReign.warsLost === 0 ? ' · 未动刀兵' : ''
+        }</span>`,
+      );
+    }
+    legendHtml += line('王朝更迭', `<span class="lb-sub">共 ${gens} 代君主，${world.nations.length} 国兴替</span>`);
+    if (slainTotal > 0) {
+      legendHtml += line(
+        '巨兽之祸',
+        `<span class="lb-sub">${world.beasts.filter((b) => b.alive).length} 头仍在荒野 · 累计 ${Math.round(slainTotal)} 人死于兽口` +
+        `${razedTotal ? ` · ${razedTotal} 城沦为兽巢` : ''}</span>`,
+      );
+    }
+    if (!legendHtml) {
+      legendHtml = '<div class="lb-row"><span class="lb-sub">这一世过于短暂，未留下可记之人。</span></div>';
+    }
     const majorHtml = major.length
       ? major.map((e) => `<div style="color:#b9c4d4;font-size:11.5px;line-height:1.7">
           <span style="color:#a98f2c">第${Math.round(e.year)}年</span> ${escapeHtml(e.text)}</div>`).join('')
@@ -237,6 +279,11 @@ export function showEnding(overlay: HTMLElement, world: World): Promise<EndingRe
 
         <h2>人口曲线</h2>
         <div class="hist">${bars || '<i style="height:2%"></i>'}</div>
+
+        <h2>史册之最</h2>
+        <div class="legend-board">
+          ${legendHtml}
+        </div>
 
         <h2>各族终局</h2>
         <div>

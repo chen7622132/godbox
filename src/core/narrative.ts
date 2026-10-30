@@ -330,9 +330,31 @@ export class Narrator {
     return `${king} 拔 ${city}。城破之日，屠 ${s}，血流至城外三里。`;
   }
 
+  /**
+   * 谥号：一字盖棺。古人用这一个字，把一个人的一生说完。
+   * 厉 = 杀戮无辜 / 武 = 克定祸乱 / 桓 = 辟土服远 /
+   * 哀 = 恭仁短折 / 文 = 慈惠爱民 / 殇 = 未冠而终 / 平 = 治而无眚
+   */
+  posthumous(k: {
+    citiesTaken: number;
+    warsWon: number;
+    warsLost: number;
+    popSlain: number;
+    reign: number;
+  }): string {
+    if (k.popSlain >= 5000) return '厉';
+    if (k.citiesTaken >= 4) return '武';
+    if (k.warsWon >= k.warsLost + 2) return '桓';
+    if (k.warsLost >= 2 && k.warsLost > k.warsWon) return '哀';
+    if (k.warsWon + k.warsLost === 0 && k.reign >= 25) return '文';
+    if (k.reign < 8) return '殇';
+    return '平';
+  }
+
   /** 死亡 */
-  deathText(name: string, age: number, cause: string, epithet: string): string {
-    return `${name}${epithet ? `（${epithet}）` : ''}${cause}，年 ${cnNum(age)}。`;
+  deathText(name: string, age: number, cause: string, epithet: string, post = ''): string {
+    const tail = post ? `谥曰${post}。` : '';
+    return `${name}${epithet ? `（${epithet}）` : ''}${cause}，年 ${cnNum(age)}。${tail}`;
   }
 
   /** 加冕 */

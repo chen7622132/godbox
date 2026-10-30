@@ -258,6 +258,8 @@ export interface Agent {
   deeds: Deed[];
   /** 死因 */
   cause: string | null;
+  /** 谥号（死后一字定评） */
+  posthumous: string;
   /** 死于哪一年 */
   diedYear: number | null;
 }

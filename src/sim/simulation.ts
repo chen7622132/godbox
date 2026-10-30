@@ -669,6 +669,7 @@ function appointKing(world: World, n: Nation): void {
     reign: 0,
     deeds: [],
     cause: null,
+    posthumous: '',
     diedYear: null,
   };
   world.agents.push(a);
@@ -1011,9 +1012,11 @@ function killKing(world: World, n: Nation, k: Agent, cause: string, killerNation
     });
   }
 
+  const post = narrator.posthumous(k);
+  k.posthumous = post;
   logEvent(
     world, 'death',
-    narrator.deathText(k.name, k.age, cause, k.epithet),
+    narrator.deathText(k.name, Math.round(k.age), cause, k.epithet, post),
     n.race,
     // 只有真正干过事的人，死了才值得进「重要事件」
     k.warsWon + k.citiesTaken + k.popSlain / 500 >= 1 ? 2 : 1,
