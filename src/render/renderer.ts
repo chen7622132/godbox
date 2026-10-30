@@ -106,6 +106,8 @@ export class Renderer {
   cssH = 1;
 
   cam: Camera = { x: 0, y: 0, zoom: 4 };
+  /** 每帧复用的绘制排序表，避免反复分配数组 */
+  private _unitList: World['units'] = [];
   hover: { x: number; y: number } | null = null;
   hoverRadius = 2;
   selected: number | null = null;
@@ -276,7 +278,13 @@ export class Renderer {
     this.drawRoads(world);
     this.drawSettlements(world);
     this.drawWonders(world);
+    const ab = this.armyBounds(world);
+    this.drawCorpses(world);
+    this.drawArmyGround(ab);
     this.drawUnits(world);
+    this.drawArrows(world);
+    this.drawArmyFlags(ab, world);
+    this.drawSparks(world);
     this.drawBeasts(world);
     this.drawHover();
   }
@@ -589,15 +597,233 @@ export class Renderer {
     const { ctx } = this;
     const now = Date.now();
 
-    for (const u of world.units) {
+    // 俯视视角里必须「前面的人盖住后面的人」：先按 y 排一遍，
+    // 否则一群人看起来像并排贴纸，没有前后层次。
+    const list = this._unitList;
+    list.length = 0;
+    for (const u of world.units) list.push(u);
+    list.sort((a, b) => a.y - b.y);
+
+    for (const u of list) {
       const [sx, sy] = this.worldToScreen(u.x, u.y);
       if (sx < -24 || sy < -24 || sx > this.cssW + 24 || sy > this.cssH + 24) continue;
       const look = RACE_LOOK[u.race] ?? RACE_LOOK[0];
       const kid = u.job === 'child';
       // 人约房子的 1/3 高：再小就看不见脸，再大就不像城
-      const H = Math.max(5, Math.min(24, Math.round(z * (kid ? 0.18 : 0.3) * look.h)));
+      const extra = u.role === 'general' ? 0.34 : u.role === 'archer' ? 0.29 : 0.3;
+      const H = Math.max(5, Math.min(28, Math.round(z * (kid ? 0.18 : extra) * look.h)));
       const W = Math.max(3, Math.round(H * 0.56 * look.w));
-      paintUnit(ctx, sx, sy, H, W, u, look, now);
+      const flag = world.nations[u.nation]?.color ?? '#c8492f';
+      paintUnit(ctx, sx, sy, H, W, u, look, now, flag);
+      // 受击白光：被砍到的那一瞬间整个人闪一下白，缩到远景也看得见
+      if (u.flash !== undefined && u.flash > world.tick) {
+        ctx.fillStyle = 'rgba(255,255,255,0.78)';
+        ctx.fillRect(Math.round(sx - W / 2) - 1, Math.round(sy - H / 2), W + 2, H);
+      }
+    }
+  }
+
+  // ==================== 战场图层 ====================
+
+  /** 尸体：躺倒的小人。它让战场留下痕迹，而不是打完就干净得像没事发生。 */
+  private drawCorpses(world: World): void {
+    if (!world.corpses?.length) return;
+    const z = this.cam.zoom;
+    if (z < 5) return;
+    const { ctx } = this;
+    for (const c of world.corpses) {
+      const [sx, sy] = this.worldToScreen(c.x, c.y);
+      if (sx < -20 || sy < -20 || sx > this.cssW + 20 || sy > this.cssH + 20) continue;
+      const look = RACE_LOOK[c.race] ?? RACE_LOOK[0];
+      const H = Math.max(3, Math.round(z * 0.28));
+      const W = Math.max(2, Math.round(H * 0.5));
+      const fade = c.age > 600 ? 0.45 : 1;
+      // 血泊：一小片暗红，让它比草地上任何东西都暗一档
+      if (z >= 10) {
+        ctx.fillStyle = `rgba(88,18,14,${0.42 * fade})`;
+        ctx.fillRect(Math.round(sx - H * 0.65), Math.round(sy - 1), Math.round(H * 1.3), Math.max(2, Math.round(W * 0.9)));
+        ctx.fillStyle = `rgba(120,26,20,${0.3 * fade})`;
+        ctx.fillRect(Math.round(sx - H * 0.45), Math.round(sy), Math.round(H * 0.9), Math.max(1, Math.round(W * 0.5)));
+      }
+      // 身体横躺：宽度=身高，高度=肩宽；外面一圈深色描边保证在草地上不糊
+      ctx.fillStyle = `rgba(14,10,8,${0.55 * fade})`;
+      ctx.fillRect(Math.round(sx - H * 0.5) + 1, Math.round(sy + 2), H + 1, Math.max(2, W * 0.75));
+      ctx.fillStyle = look.cloth2;
+      ctx.fillRect(Math.round(sx - H * 0.5), Math.round(sy), Math.round(H * 0.72), W);
+      ctx.fillStyle = look.skin;
+      ctx.fillRect(Math.round(sx + H * 0.22), Math.round(sy), Math.max(1, Math.round(W * 0.9)), Math.max(1, W));
+      if (z >= 12) {
+        ctx.fillStyle = look.hair;
+        ctx.fillRect(Math.round(sx + H * 0.22), Math.round(sy), Math.max(1, Math.round(W * 0.9)), 1);
+      }
+    }
+  }
+
+  /** 箭矢：一根亮线 + 一段更淡的拖尾 */
+  private drawArrows(world: World): void {
+    if (!world.arrows?.length) return;
+    const z = this.cam.zoom;
+    if (z < 6) return;
+    const { ctx } = this;
+    ctx.save();
+    ctx.lineCap = 'butt';
+    for (const a of world.arrows) {
+      if (!a.active) continue;
+      const [sx, sy] = this.worldToScreen(a.x, a.y);
+      if (sx < -20 || sy < -20 || sx > this.cssW + 20 || sy > this.cssH + 20) continue;
+      const sp = Math.hypot(a.vx, a.vy) || 1;
+      const ux = a.vx / sp;
+      const uy = a.vy / sp;
+      const len = Math.max(4, Math.min(22, z * 0.42));
+      ctx.strokeStyle = 'rgba(255,252,236,1)';
+      ctx.lineWidth = Math.max(2, Math.round(z / 26));
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx - ux * len, sy - uy * len);
+      ctx.stroke();
+      // 拖尾：三倍半长、两层色阶，远看是一条白线
+      ctx.strokeStyle = 'rgba(240,248,255,0.45)';
+      ctx.lineWidth = Math.max(1, Math.round(z / 40));
+      ctx.beginPath();
+      ctx.moveTo(sx - ux * len, sy - uy * len);
+      ctx.lineTo(sx - ux * len * 3.4, sy - uy * len * 3.4);
+      ctx.stroke();
+      // 箭头：一个亮点
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 1, Math.max(2, Math.round(z / 32)), Math.max(2, Math.round(z / 32)));
+    }
+    ctx.restore();
+  }
+
+  /** 火花：所有粒子攒成一条路径，一次画完 */
+  private drawSparks(world: World): void {
+    if (!world.sparks?.length) return;
+    const z = this.cam.zoom;
+    if (z < 6) return;
+    const { ctx } = this;
+    const size = Math.max(1, Math.round(z * 0.045));
+    for (let kind = 0; kind < 3; kind++) {
+      let any = false;
+      ctx.beginPath();
+      for (const s of world.sparks) {
+        if (s.kind !== kind) continue;
+        const [sx, sy] = this.worldToScreen(s.x, s.y);
+        if (sx < -10 || sy < -10 || sx > this.cssW + 10 || sy > this.cssH + 10) continue;
+        const k = s.life / s.max;
+        // 血花比火花大一号：它得让人「看见血」，而不只是看见有个像素在动
+        const sz = Math.max(1, Math.round(size * (0.5 + k) * (kind === 0 ? 1.8 : 1)));
+        ctx.rect(Math.round(sx), Math.round(sy), sz, sz);
+        any = true;
+      }
+      if (!any) continue;
+      ctx.fillStyle = kind === 0
+        ? 'rgba(206,46,32,0.9)'
+        : kind === 1
+          ? 'rgba(255,246,206,0.95)'
+          : 'rgba(150,140,120,0.6)';
+      ctx.fill();
+    }
+  }
+
+  // ==================== 军队 ====================
+
+  /** 每帧算一次各军队的包围盒，地面阴影 / 旗标 / 血条共用，避免重复遍历 */
+  private armyBounds(
+    world: World,
+  ): { a: World['armies'][number]; x0: number; y0: number; x1: number; y1: number }[] {
+    const out: { a: World['armies'][number]; x0: number; y0: number; x1: number; y1: number }[] = [];
+    if (!world.armies?.length) return out;
+    for (const a of world.armies) {
+      let x0 = 1e9;
+      let y0 = 1e9;
+      let x1 = -1e9;
+      let y1 = -1e9;
+      let n = 0;
+      for (const u of world.units) {
+        if (u.army !== a.id) continue;
+        n++;
+        if (u.x < x0) x0 = u.x;
+        if (u.x > x1) x1 = u.x;
+        if (u.y < y0) y0 = u.y;
+        if (u.y > y1) y1 = u.y;
+      }
+      if (n < 3) continue;
+      out.push({ a, x0, y0, x1, y1 });
+    }
+    return out;
+  }
+
+  /**
+   * 军队脚下的暗影。
+   * 它的作用不是「好看」，是让一支部队在远景 zoom 8~16 时也能被认出来：
+   * 二十几个 5px 的小人本来会化成一堆杂点，有了这层底板就变成「一块在动的东西」。
+   */
+  private drawArmyGround(boxes: ReturnType<Renderer['armyBounds']>): void {
+    const z = this.cam.zoom;
+    if (z < 4) return;
+    const { ctx } = this;
+    for (const b of boxes) {
+      const [sx0, sy0] = this.worldToScreen(b.x0 - 0.18, b.y0 - 0.14);
+      const [sx1, sy1] = this.worldToScreen(b.x1 + 0.18, b.y1 + 0.2);
+      if (sx1 < -80 || sy1 < -80 || sx0 > this.cssW + 80 || sy0 > this.cssH + 80) continue;
+      const w = Math.max(10, Math.round(sx1 - sx0));
+      const h = Math.max(8, Math.round(sy1 - sy0));
+      const x = Math.round(sx0);
+      const y = Math.round(sy0);
+      // 两层：外圈更淡，内圈更深 —— 像素风里靠两层色阶表现「压下去」
+      ctx.fillStyle = 'rgba(10,16,10,0.22)';
+      ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+      ctx.fillStyle = 'rgba(10,16,10,0.26)';
+      ctx.fillRect(x + 1, y + 2, w - 2, h - 2);
+    }
+  }
+
+  /**
+   * 军队的旗标与血条。
+   *
+   * 远看（zoom < 26）时小人身上的旗只有 2×3 像素，等于看不见；
+   * 所以这里按屏幕尺寸补一个旗标 —— 战争片里「军旗」本来就该是最先被看见的东西。
+   */
+  private drawArmyFlags(boxes: ReturnType<Renderer['armyBounds']>, world: World): void {
+    const z = this.cam.zoom;
+    if (z < 4) return;
+    const { ctx } = this;
+
+    for (const b of boxes) {
+      const a = b.a;
+      const col = world.nations[a.nation]?.color ?? '#c8492f';
+      const g = world.units.find((u) => u.id === a.general);
+      const gx = g ? g.x : a.x;
+      const gy = g ? g.y : a.y;
+      const [sx, sy] = this.worldToScreen(gx, gy);
+      const bob = Math.floor(Date.now() / 260) % 2;
+
+      // ---- 远景旗标 ----
+      if (z < 26) {
+        const ph = Math.max(9, Math.min(26, Math.round(z * 0.9)));
+        const pw = Math.max(6, Math.round(ph * 0.62));
+        const px = Math.round(sx) + 1;
+        const py = Math.round(sy) - Math.round(ph * 0.6);
+        ctx.fillStyle = 'rgba(16,12,8,0.85)';
+        ctx.fillRect(px, py, Math.max(1, Math.round(ph * 0.09)) + 1, ph);
+        ctx.fillStyle = col;
+        ctx.fillRect(px + 1, py - bob, pw, Math.max(3, Math.round(ph * 0.42)));
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillRect(px + 1, py - bob, pw, 1);
+      }
+
+      // ---- 血条：只有 2px 高，细到像一根线 ----
+      const [sxB0] = this.worldToScreen(b.x0 - 0.25, 0);
+      const [sxB1] = this.worldToScreen(b.x1 + 0.25, 0);
+      const [, syTop] = this.worldToScreen(0, b.y0 - 0.44);
+      const bw = Math.max(12, Math.round(sxB1 - sxB0));
+      const bx = Math.round(sxB0);
+      const by = Math.round(syTop);
+      const st = Math.max(0, Math.min(1, a.strength));
+      ctx.fillStyle = 'rgba(8,10,8,0.62)';
+      ctx.fillRect(bx - 1, by - 1, bw + 2, 4);
+      ctx.fillStyle = st > 0.7 ? '#6fd45a' : st > 0.35 ? '#e8b83c' : '#d4442c';
+      ctx.fillRect(bx, by, Math.max(1, Math.round(bw * st)), 2);
     }
   }
 
@@ -1606,10 +1832,32 @@ export function paintUnit(
   sy: number,
   H: number,
   W: number,
-  u: { race: number; job: string; state: string; dir: number; anim: number },
+  u: { race: number; job: string; state: string; dir: number; anim: number; role?: string; fx?: number; fy?: number; swing?: number },
   look: { skin: string; cloth: string; cloth2: string; hair: string; w: number; h: number },
   now: number,
+  flagCol = '#c8492f',
 ): void {
+  // 远景（人只有 5~7 像素）不值得画 40 个矩形 —— 那 90% 的细节都会糊成一个点。
+  // 这里退化成「三块色」：阵营色身体 + 肤色头 + 一条国色，帧率立刻回来。
+  if (H < 8) {
+    const hw0 = Math.max(2, Math.round(W * 1.02));
+    const hh0 = Math.max(1, Math.round(H * 0.34));
+    const bx0 = Math.round(sx - W / 2);
+    const byFoot0 = Math.round(sy + H / 2);
+    ctx.fillStyle = 'rgba(10,14,10,0.3)';
+    ctx.fillRect(bx0, byFoot0, W, 1);
+    // 士兵直接穿国色：远景下这是「分清敌我」最省像素的办法
+    ctx.fillStyle = u.job === 'soldier' ? flagCol : u.job === 'priest' ? '#e8e4d4' : look.cloth;
+    ctx.fillRect(bx0, byFoot0 - H + hh0, W, H - hh0);
+    ctx.fillStyle = look.skin;
+    ctx.fillRect(Math.round(sx - hw0 / 2), byFoot0 - H, hw0, hh0);
+    if (u.state === 'fight') {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillRect(bx0 + W, byFoot0 - H + 1, 1, Math.max(1, Math.round(H * 0.5)));
+    }
+    return;
+  }
+
   const L1 = H >= 7;   // 影子、手臂
   const L2 = H >= 10;  // 眼睛、腰带、靴子
   const L3 = H >= 16;  // 护鼻、盾纹、斧刃
@@ -1740,27 +1988,110 @@ export function paintUnit(
   // ---- 职业装备 ----
   const eqW = Math.max(1, Math.round(W * 0.34));
   if (u.job === 'soldier') {
-    ctx.fillStyle = '#9aa4b2';
-    ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.58)));
-    ctx.fillStyle = '#c8d2dc';
-    ctx.fillRect(hx, byHead, hw, 1);
-    if (L3) {
-      ctx.fillStyle = '#7d8794';
-      ctx.fillRect(Math.round(sx), byHead, 1, Math.round(headH * 0.55));
-    }
-    // 长矛：矛杆 + 明显矛头
-    ctx.fillStyle = '#8a6a44';
-    ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.16), Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
-    ctx.fillStyle = '#eef4fa';
-    const sh2 = Math.max(2, Math.round(H * 0.22));
-    ctx.fillRect(bx + W, byHead - Math.round(H * 0.16) - sh2, Math.max(2, Math.round(W * 0.62)), sh2);
-    // 盾
-    if (L2) {
-      ctx.fillStyle = look.cloth2;
-      ctx.fillRect(bx - 3, byBody, 2, Math.max(2, Math.round(bodyH * 0.85)));
+    const role = u.role ?? 'melee';
+    const bob = u.state === 'fight' ? Math.floor(now / 90) % 2 : 0;
+
+    if (role === 'general') {
+      // ---- 将军：羽饰头盔 + 披风 + 帅旗（全阵唯一的旗）----
+      ctx.fillStyle = '#b9c2cd';
+      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.58)));
+      ctx.fillStyle = '#dfe7ef';
+      ctx.fillRect(hx, byHead, hw, 1);
+      // 羽饰：一撮国色，必须够高才看得见
+      ctx.fillStyle = flagCol;
+      const fh = Math.max(2, Math.round(H * 0.22));
+      ctx.fillRect(Math.round(sx - 1), byHead - fh, 2, fh);
+      // 披风：背后一整片国色
+      ctx.fillStyle = flagCol;
+      ctx.fillRect(bx - 2, byBody - 1, 2, bodyH + 1);
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fillRect(bx - 2, byBody + bodyH - 1, 2, 1);
+      // 旗杆：高过身体一截，远看就是一根竖线（紧贴身体，不然像悬空的）
+      const poleH = Math.max(5, Math.round(H * 1.55));
+      const poleW = Math.max(1, Math.round(W * 0.22));
+      ctx.fillStyle = '#5e3f22';
+      ctx.fillRect(bx + W + 1, byHead - poleH + 2, poleW, poleH);
+      // 旗面：宽过旗手大半个身位，右端随 anim 三段波动
+      const wav = (Math.floor(u.anim / 6) % 3) - 1;
+      const fw = Math.max(5, Math.round(W * 2.6));
+      const fh2 = Math.max(4, Math.round(H * 0.5));
+      const fx0 = bx + W + 1 + poleW;
+      const fyy = byHead - poleH + 2 + wav;
+      // 深色描边打底：白底旗在雪地/沙地上不会糊掉
+      ctx.fillStyle = 'rgba(20,16,12,0.62)';
+      ctx.fillRect(fx0 - 1, fyy - 1, fw + 2, fh2 + 2);
+      ctx.fillStyle = flagCol;
+      ctx.fillRect(fx0, fyy, fw, fh2);
+      // 飘动时右端多出一列，形成「布在飘」的错觉
+      if (wav !== 0) {
+        ctx.fillRect(fx0 + fw, fyy + (wav > 0 ? 1 : 0), 1, Math.max(2, fh2 - 1));
+      }
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillRect(fx0, fyy, fw, 1);
+      ctx.fillStyle = 'rgba(0,0,0,0.34)';
+      ctx.fillRect(fx0, fyy + fh2 - 1, fw, 1);
+      // 旗心一枚徽记：放大后才看得见的小十字
+      if (L3 && fw >= 6) {
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fillRect(fx0 + Math.round(fw / 2), fyy + 1, 1, Math.max(1, fh2 - 2));
+        ctx.fillRect(fx0 + Math.round(fw / 2) - 1, fyy + Math.round(fh2 / 2), 3, 1);
+      }
+    } else if (role === 'archer') {
+      // ---- 弓手：软帽 + 背后箭囊 + 一张竖弓 ----
+      ctx.fillStyle = '#57694f';
+      ctx.fillRect(hx - 1, byHead, hw + 2, Math.max(1, Math.round(headH * 0.4)));
+      ctx.fillStyle = '#3d4c38';
+      ctx.fillRect(hx - 1, byHead + Math.max(1, Math.round(headH * 0.4)) - 1, hw + 2, 1);
+      // 箭囊：左后侧一束，插两根白羽
+      if (L1) {
+        ctx.fillStyle = '#4a3a26';
+        ctx.fillRect(bx - 2, byBody, 2, Math.max(2, Math.round(bodyH * 0.8)));
+        ctx.fillStyle = '#eaf1f7';
+        ctx.fillRect(bx - 2, byBody - 2, 1, 2);
+        ctx.fillRect(bx - 1, byBody - 1, 1, 1);
+      }
+      // 弓：竖弧（上下各一个弯钩），宽度 2px 才在缩放后看得见
+      const bowH = Math.max(3, Math.round(H * 0.72));
+      const bowW = Math.max(1, Math.round(W * 0.2));
+      ctx.fillStyle = '#c9a155';
+      ctx.fillRect(bx + W + 1, byBody - 2 + bob, bowW, bowH);
+      ctx.fillRect(bx + W, byBody - 3 + bob, bowW, Math.max(1, Math.round(H * 0.1)));
+      ctx.fillRect(bx + W, byBody - 2 + bowH + bob, bowW, Math.max(1, Math.round(H * 0.1)));
+      // 弓弦：亮线，拉满时才看得出「在射」
+      ctx.fillStyle = 'rgba(245,248,235,0.72)';
+      ctx.fillRect(bx + W + 1 + bowW, byBody - 2 + bob, 1, bowH);
       if (L3) {
-        ctx.fillStyle = '#d8dee6';
-        ctx.fillRect(bx - 3, byBody + Math.round(bodyH * 0.3), 1, 1);
+        // 拉弓时手在弦上
+        ctx.fillStyle = look.skin;
+        ctx.fillRect(bx + W + 1, byBody + Math.round(bowH * 0.4) + bob, 1, 1);
+      }
+    } else {
+      // ---- 近战：头盔 + 长矛 + 盾 ----
+      // 国色腰带：同族交战（比如兽人打兽人）时，这是唯一能分出敌我的东西
+      ctx.fillStyle = flagCol;
+      ctx.fillRect(bx, byBody + Math.max(1, Math.round(bodyH * 0.6)), W, Math.max(1, Math.round(H * 0.1)));
+      ctx.fillStyle = '#9aa4b2';
+      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.58)));
+      ctx.fillStyle = '#c8d2dc';
+      ctx.fillRect(hx, byHead, hw, 1);
+      if (L3) {
+        ctx.fillStyle = '#7d8794';
+        ctx.fillRect(Math.round(sx), byHead, 1, Math.round(headH * 0.55));
+      }
+      // 长矛：矛杆 + 明显矛头
+      ctx.fillStyle = '#8a6a44';
+      ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.16), Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
+      ctx.fillStyle = '#eef4fa';
+      const sh2 = Math.max(2, Math.round(H * 0.22));
+      ctx.fillRect(bx + W, byHead - Math.round(H * 0.16) - sh2, Math.max(2, Math.round(W * 0.62)), sh2);
+      // 盾
+      if (L2) {
+        ctx.fillStyle = look.cloth2;
+        ctx.fillRect(bx - 3, byBody, 2, Math.max(2, Math.round(bodyH * 0.85)));
+        if (L3) {
+          ctx.fillStyle = '#d8dee6';
+          ctx.fillRect(bx - 3, byBody + Math.round(bodyH * 0.3), 1, 1);
+        }
       }
     }
   } else if (u.job === 'wood') {
@@ -1806,14 +2137,36 @@ export function paintUnit(
 
   // ---- 战斗 ----
   if (u.state === 'fight') {
+    const ang = Math.atan2(u.fy ?? 0, u.fx ?? 1);
+    const swinging = (u.swing ?? 0) > 0;
+
+    // 扇形残影：只在「挥下去的那几帧」出现，半透明，像刀风扫过
+    if (swinging) {
+      const r1 = Math.max(6, W * 3.4);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.arc(sx, sy, r1, ang - 0.9, ang + 0.9);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(226,244,255,0.22)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(sx, sy, r1, ang - 0.9, ang + 0.9);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = Math.max(1, Math.round(r1 * 0.08));
+      ctx.stroke();
+    }
+
+    // 兵器：近战是刀，弓手是弓（弓在装备阶段已画，这里只补挥击）
     const t = Math.floor(now / 70);
-    const sw = t % 2 === 0;
-    ctx.fillStyle = '#f0f6fc';
-    if (sw) {
-      ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.3), Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
-      ctx.fillRect(bx + W, byHead - Math.round(H * 0.3), Math.round(W * 0.72), Math.max(1, Math.round(H * 0.13)));
-    } else {
-      ctx.fillRect(bx + W + 2, byBody - 1, Math.round(H * 0.44), Math.max(1, Math.round(W * 0.3)));
+    if (u.role !== 'archer') {
+      const sw = swinging || t % 2 === 0;
+      ctx.fillStyle = '#f0f6fc';
+      if (sw) {
+        ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.3), Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
+        ctx.fillRect(bx + W, byHead - Math.round(H * 0.3), Math.round(W * 0.72), Math.max(1, Math.round(H * 0.13)));
+      } else {
+        ctx.fillRect(bx + W + 2, byBody - 1, Math.round(H * 0.44), Math.max(1, Math.round(W * 0.3)));
+      }
     }
     if (t % 2 === 0) {
       ctx.fillStyle = 'rgba(210,28,18,0.9)';

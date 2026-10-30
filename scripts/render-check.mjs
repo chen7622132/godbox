@@ -96,7 +96,7 @@ await moodShot(2, 'angry', 'tantrum', 'mood-angry');
 
 // 行军特写：让一队兵从 A 城开往 B 城
 {
-  const { launchMarch, advanceMarch } = await import('../src/sim/units.ts');
+  const { formArmy, updateArmies } = await import('../src/sim/units.ts');
   const sorted = live.sort((a, b) => b.pop - a.pop);
   const A = sorted[0], B = sorted[1];
   const m = launchMarch(world, A.id, B.id, A.nation >= 0 ? A.nation : 0, A.race);

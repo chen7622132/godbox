@@ -4,12 +4,13 @@ import { logEvent } from '../core/events';
 import {
   T, IS_LAND, YEARS_PER_TICK, TIER_POP, TIER_NAME, TECH_POWER, FOOD,
   type World, type Settlement, type Nation, type Agent, type MoodState, type StatusKind,
-  type Ambition,
+  type Ambition, type Army,
 } from '../core/types';
 import { Narrator, grandNum } from '../core/narrative';
 import { updateBeasts, maybeAwakenBeast } from './beasts';
 import { updateWonders, wonderBuff } from './wonders';
-import { updateUnits, syncUnitsToCities, spawnBattle, endBattles, launchMarch, advanceMarch, arriveMarch } from './units';
+import { updateUnits, syncUnitsToCities, spawnBattle, endBattles, formArmy, formGarrison, updateArmies, arriveArmy, reinforceArmy } from './units';
+import { updateCombat } from './combat';
 import { findLandNear } from '../core/world';
 
 const rng = new Rng(1);
@@ -212,6 +213,8 @@ export function stepWorld(world: World): void {
   updateMoods(world);
   if (world.tick % 30 === 0) updateBeasts(world);
   if (world.tick % 40 === 0) updateWonders(world);
+  updateArmies(world);
+  updateCombat(world);
   updateUnits(world);
   syncUnitsToCities(world);
   endBattles(world);
@@ -220,6 +223,7 @@ export function stepWorld(world: World): void {
   if (world.tick % 5 === 0) updateNations(world);
   if (world.tick % 4 === 0) updateDiplomacy(world);
   if (world.tick % 20 === 0) resolveCampaigns(world);
+  if (world.tick % 4 === 0) stepBattles(world);
   if (world.tick % 2200 === 0) {
     // 卷末：先写史评，再开新卷
     const eraNo = Math.floor(world.tick / 2200);
@@ -1029,21 +1033,21 @@ function nationPower(world: World, n: Nation, attacking: boolean): number {
  * 原来的写法是「判定时在城下凭空生成两拨人」，玩家看到的是一场没有前因的混战。
  */
 function resolveCampaigns(world: World): void {
-  // ---------- 1. 推进已在路上的军队 ----------
-  for (const m of world.marches) {
-    if (m.resolved) continue;
-    if (!advanceMarch(world, m)) continue;
-    m.resolved = true;
-    resolveArrival(world, m);
+  // ---------- 1. 抵达城下 → 开打（胜负由战斗过程决定，不由一次投骰决定） ----------
+  for (const m of world.armies) {
+    if (m.resolved || m.kind !== 'attack') continue;
+    if (m.state !== 'clash') continue;
+    // timer>0 表示已经拉出守军、开打了；updateArmies 只负责把军队挪到城下
+    if (m.timer > 0) continue;
+    enterBattle(world, m);
   }
-  if (world.marches.length) world.marches = world.marches.filter((m) => !m.resolved);
 
   // ---------- 2. 决定是否发新的兵 ----------
   for (const a of world.nations) {
     if (!a.alive || a.enemies.length === 0) continue;
-    if (world.tick - a.lastCampaign < 60) continue;
+    if (world.tick - a.lastCampaign < 600) continue;
     // 同时只允许一支军队在路上，避免多线乱飞
-    if (world.marches.some((m) => m.nation === a.id)) continue;
+    if (world.armies.some((m) => m.nation === a.id)) continue;
 
     for (const eid of [...a.enemies]) {
       const b = world.nations[eid];
@@ -1076,9 +1080,9 @@ function resolveCampaigns(world: World): void {
       if (from < 0) continue;
 
       a.lastCampaign = world.tick;
-      const march = launchMarch(world, from, target.id, a.id, a.race);
+      const march = formArmy(world, from, target.id, a.id, a.race);
       if (march) {
-        world.marches.push(march);
+        world.armies.push(march);
         const ka = world.agents[a.king];
         if (ka) {
           ka.deeds.push({
@@ -1093,27 +1097,118 @@ function resolveCampaigns(world: World): void {
   }
 }
 
-/** 军队抵达：这时候才真正结算这场战役 */
-function resolveArrival(world: World, m: World['marches'][number]): void {
+/**
+ * 军队抵达城下 → 守军出城列阵，进入交战。
+ *
+ * 这里只做「开打」这一件事：把攻方切到 clash，再给城里拉出一支守军方阵。
+ * 之后每一 tick 由 combat.ts 让两拨人真的互砍，谁先被打崩由 hit 数决定。
+ */
+function enterBattle(world: World, m: Army): void {
+  m.state = 'clash';
+  m.timer = world.tick + 1;
+  const target = world.settlements[m.to];
+  if (!target || !target.alive || target.nation < 0) {
+    m.state = 'retreat';
+    m.resolved = true;
+    return;
+  }
+  const hasDef = world.armies.some(
+    (d) => d.kind === 'defend' && d.to === m.to && d.nation === target.nation && !d.resolved && d.units.length > 0,
+  );
+  if (!hasDef) {
+    const g = formGarrison(world, m.to, m.x, m.y, m.units.length);
+    if (g) world.armies.push(g);
+  }
+}
+
+/** 每 4 tick 看一次：哪一方先撑不住 */
+function stepBattles(world: World): void {
+  if (!world.armies.length) return;
+  for (const m of world.armies) {
+    if (m.kind !== 'attack' || m.state !== 'clash' || m.resolved) continue;
+    const target = world.settlements[m.to];
+    if (!target || !target.alive) {
+      m.state = 'retreat';
+      m.resolved = true;
+      continue;
+    }
+    const def = world.armies.find(
+      (d) => d.kind === 'defend' && d.to === m.to && d.nation === target.nation && !d.resolved,
+    );
+    const atkDown = m.strength <= 0.35 || m.units.length === 0;
+    const defDown = !def || def.strength <= 0.35 || def.units.length === 0;
+
+    if (defDown && !atkDown) {
+      m.resolved = true;
+      resolveArrival(world, m, true);
+    } else if (atkDown) {
+      m.state = 'retreat';
+      m.timer = 0;
+      resolveArrival(world, m, false);
+    }
+  }
+  // ---- 城下重整：补员 → 再压上去 ----
+  for (const m of world.armies) {
+    if (m.kind !== 'attack' || m.state !== 'rally' || m.resolved) continue;
+    if (world.tick % 15 === 0) reinforceArmy(world, m, 2);
+    const done = m.units.length >= m.initial || world.tick >= m.timer;
+    if (!done) continue;
+    m.retries++;
+    if (m.units.length < 6 || m.retries >= 3) {
+      // 人打光了，或者扑了三次还是不行 —— 这支军队就地解散
+      m.resolved = true;
+      arriveArmy(world, m, true);
+      m.units = [];
+      continue;
+    }
+    const t = world.settlements[m.to];
+    if (t && t.alive) {
+      const dx = t.x + 0.5 - m.x;
+      const dy = t.y + 0.5 - m.y;
+      const d = Math.max(0.001, Math.hypot(dx, dy));
+      m.fx = dx / d;
+      m.fy = dy / d;
+      m.state = 'march';
+      m.arrive = world.tick + Math.max(30, Math.round(d * 8));
+      m.timer = 0;
+      logEvent(
+        world, 'battle',
+        `${world.nations[m.nation]?.name ?? ''} 残部于 ${world.settlements[m.from]?.name ?? '本国'} 重整，再赴 ${t.name}`,
+        m.race, 0,
+        { cause: '败而不退，补卒再战' },
+      );
+    } else {
+      m.resolved = true;
+      m.units = [];
+    }
+  }
+
+  world.armies = world.armies.filter((m) => !m.resolved);
+}
+
+/** 一场围城打完了，结算它的历史后果 */
+function resolveArrival(world: World, m: Army, win: boolean): void {
   const target = world.settlements[m.to];
   if (!target || !target.alive) return;
   const a = world.nations[m.nation];
   const b = target.nation >= 0 ? world.nations[target.nation] : undefined;
   if (!a || !a.alive || !b || !b.alive) return;
 
-  const atk = nationPower(world, a, true) * (0.75 + rng.next() * 0.6);
-  const defense = nationPower(world, b, false)
-    * (1 + target.walls * 0.3)
-    * (target.capital ? 1.35 : 1)
-    * (0.8 + rng.next() * 0.45);
-
   world.stats.battles++;
   const ka = world.agents[a.king]?.name ?? '大将';
   const kb = world.agents[b.king]?.name ?? '守将';
-  const win = atk > defense;
 
-  spawnBattle(world, target.id, a.race, a.id, win);
-  arriveMarch(world, m, win);
+  arriveArmy(world, m, win, !win);
+  if (win) m.units = [];
+  // 守军残部回城
+  const def = world.armies.find(
+    (d) => d.kind === 'defend' && d.to === m.to && d.nation === b.id && !d.resolved,
+  );
+  if (def) {
+    def.resolved = true;
+    arriveArmy(world, def, true);
+    def.units = [];
+  }
 
   if (win) {
     conquer(world, a, b, target, ka);

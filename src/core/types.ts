@@ -384,6 +384,104 @@ export interface Unit {
   hp: number;
   /** 朝向 0下 1左 2右 3上 */
   dir: number;
+  // ---- 战争系统（v2.0）----
+  /** 战场角色：平民 / 将军（扛旗） / 近战 / 弓手 */
+  role?: UnitRole;
+  /** 所属军队 id */
+  army?: number;
+  /** 受击白光剩余毫秒（渲染用，不参与结算） */
+  flash?: number;
+  /** 挥击动画剩余帧 */
+  swing?: number;
+  /** 面朝单位向量（战斗时朝向敌人，渲染残影与箭矢用） */
+  fx?: number;
+  fy?: number;
+  /** 阵位偏移：横向（相对军阵侧向） */
+  ax?: number;
+  /** 阵位偏移：纵向（负数在前，正数在后） */
+  ay?: number;
+}
+
+/** 战场角色 */
+export type UnitRole = 'civilian' | 'general' | 'melee' | 'archer';
+
+/** 军队状态机：集结 → 行军 → 交战 → 撤退 → 再集结 */
+export type ArmyState = 'gather' | 'march' | 'clash' | 'retreat' | 'rally';
+
+/** 一支看得见的军队（将军 + 方阵） */
+export interface Army {
+  id: number;
+  nation: number;
+  race: number;
+  /** 攻方还是守方 */
+  kind: 'attack' | 'defend';
+  /** 出征时的编制人数（血条分母） */
+  initial: number;
+  /** 出发城 */
+  from: number;
+  /** 目标城 */
+  to: number;
+  /** 将军单位 id（扛旗那个） */
+  general: number;
+  /** 全部随军单位 id */
+  units: number[];
+  /** 阵心世界坐标 */
+  x: number;
+  y: number;
+  /** 行进方向（单位向量） */
+  fx: number;
+  fy: number;
+  state: ArmyState;
+  /** 兵力 0~1，就是那根细血条 */
+  strength: number;
+  /** 士气 0~1，掉到 0.7 以下会撤 */
+  morale: number;
+  /** 预计抵达 tick */
+  arrive: number;
+  /** 状态计时 */
+  timer: number;
+  /** 已结算过（防重复） */
+  resolved: boolean;
+  /** 撤退重整次数 */
+  retries: number;
+}
+
+/** 空中的箭 */
+export interface Arrow {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  /** 剩余飞行 tick */
+  life: number;
+  nation: number;
+  race: number;
+  /** 命中判定用的目标 unit id（-1 表示抛射落地） */
+  target: number;
+  active: boolean;
+}
+
+/** 像素火花（命中迸溅 / 尘土），对象池复用 */
+export interface Spark {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  max: number;
+  /** 0 血花 1 白色锐利火花 2 尘土 3 烟 */
+  kind: number;
+}
+
+/** 战场尸体（不参与结算，只是让战场有痕迹） */
+export interface Corpse {
+  x: number;
+  y: number;
+  race: number;
+  nation: number;
+  dir: number;
+  /** 0 躺倒 1 已淡出 */
+  age: number;
 }
 
 export interface World {
@@ -409,7 +507,14 @@ export interface World {
   wonders: Wonder[];
   units: Unit[];
   battles: { attackers: number[]; defenders: number[]; x: number; y: number; until: number; loserNation: number }[];
-  marches: { nation: number; from: number; to: number; units: number[]; arrive: number; resolved: boolean }[];
+  /** 场上的军队（原 marches，升级为带将军/士气的方阵） */
+  armies: Army[];
+  /** 飞行中的箭矢（对象池，长度固定） */
+  arrows: Arrow[];
+  /** 火花粒子（对象池） */
+  sparks: Spark[];
+  /** 战场尸体 */
+  corpses: Corpse[];
   events: ChronicleEvent[];
   stats: Stats;
   // ---- 流程 ----

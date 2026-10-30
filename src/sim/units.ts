@@ -1,5 +1,5 @@
 import { Rng } from '../core/rng';
-import type { World, Unit, Job } from '../core/types';
+import type { World, Unit, Job, Army, UnitRole } from '../core/types';
 
 /**
  * 单位系统。
@@ -54,12 +54,13 @@ export function populateCity(world: World, sid: number): void {
   if (have >= want) return;
 
   const rng = new Rng((world.seed + sid * 7919 + world.tick) ^ 0x51ed);
+  let nid = nextUnitId(world);
   for (let i = have; i < want; i++) {
     const job = pickJob(rng);
     const a = rng.next() * Math.PI * 2;
     const r = 0.5 + rng.next() * 3.8;
     world.units.push({
-      id: world.units.length,
+      id: nid++,
       race: s.race,
       job,
       nation: s.nation,
@@ -110,6 +111,8 @@ export function updateUnits(world: World): void {
 
   const fights = world.battles ?? [];
   for (const u of world.units) {
+    // 随军单位由 updateArmies 接管队形，这里不插手
+    if (u.army !== undefined) continue;
     // 站在战场上就打 —— 不管它原本在干什么
     if (u.job === 'soldier' && fights.length) {
       for (const bg of fights) {
@@ -196,6 +199,39 @@ export function syncUnitsToCities(world: World): void {
     if (!s.alive || s.ruin) dead.add(s.id);
   }
   if (dead.size) world.units = world.units.filter((u) => !dead.has(u.home));
+
+  // 战后复员：士兵打完仗会留在原地，久了会堆成一片「僵尸驻军」。
+  // 这里按城的人口配额清掉超额的那部分（只清已不属于任何军队的散兵）。
+  if (world.tick % 120 !== 0) return;
+  const perCity = new Map<number, number[]>();
+  for (const u of world.units) {
+    if (u.army !== undefined) continue;
+    let list = perCity.get(u.home);
+    if (!list) {
+      list = [];
+      perCity.set(u.home, list);
+    }
+    list.push(u.id);
+  }
+  const cut = new Set<number>();
+  for (const [sid, ids] of perCity) {
+    const sc = world.settlements[sid];
+    const cap = sc ? unitsForCity(sc.pop) + 4 : 4;
+    if (ids.length <= cap) continue;
+    // 优先遣散离城最远的
+    const cx = sc ? sc.x + 0.5 : 0;
+    const cy = sc ? sc.y + 0.5 : 0;
+    const byId = new Map(world.units.map((u) => [u.id, u]));
+    ids.sort((ia, ib) => {
+      const ua = byId.get(ia);
+      const ub = byId.get(ib);
+      const da = ua ? Math.hypot(ua.x - cx, ua.y - cy) : 0;
+      const db = ub ? Math.hypot(ub.x - cx, ub.y - cy) : 0;
+      return db - da;
+    });
+    for (let i = 0; i < ids.length - cap; i++) cut.add(ids[i]);
+  }
+  if (cut.size) world.units = world.units.filter((u) => !cut.has(u.id));
 }
 
 // ============ 战场 ============
@@ -216,10 +252,10 @@ export interface BattleGroup {
 }
 
 /**
- * 在一座城下生成一场可视化的战斗。
+ * 登记一场可视化战斗。
  *
- * 关键取舍：胜负早已由战役数值判定，这里只负责「把它演出来」——
- * 攻方从城外冲进去，守方在城里迎击，两边真的短兵相接、真的倒下。
+ * v2 的关键变化：这里不再「凭空生成两拨人」——人是 formArmy 从城里走过来的，
+ * 这个函数只做两件事：把城下所有士兵切成交战状态，记一个收场时间。
  */
 export function spawnBattle(
   world: World,
@@ -231,53 +267,14 @@ export function spawnBattle(
   const city = world.settlements[target];
   if (!city) return;
 
-  const rng = new Rng((world.tick * 131 + target * 17) ^ 0x7c3a);
-  const nAtk = 7 + rng.int(6);
-  const nDef = 5 + rng.int(5);
-
-  // 攻方：从城的一侧冲进来
-  const ang = rng.next() * Math.PI * 2;
-  for (let i = 0; i < nAtk; i++) {
-    const a = ang + (rng.next() - 0.5) * 0.8;
-    const r = 4.5 + rng.next() * 2;
-    world.units.push({
-      id: world.units.length,
-      race: attackerRace,
-      job: 'soldier',
-      nation: attackerNation,
-      home: target,
-      x: city.x + 0.5 + Math.cos(a) * r,
-      y: city.y + 0.5 + Math.sin(a) * r * 0.8,
-      tx: city.x + 0.5,
-      ty: city.y + 0.5,
-      state: 'fight',
-      timer: 90,
-      anim: rng.int(8),
-      hp: 100,
-      dir: 2,
-    });
-  }
-
-  // 守方：在城内列阵
-  for (let i = 0; i < nDef; i++) {
-    const a = rng.next() * Math.PI * 2;
-    const r = 0.6 + rng.next() * 1.8;
-    world.units.push({
-      id: world.units.length,
-      race: city.race,
-      job: 'soldier',
-      nation: city.nation,
-      home: target,
-      x: city.x + 0.5 + Math.cos(a) * r,
-      y: city.y + 0.5 + Math.sin(a) * r * 0.8,
-      tx: city.x + 0.5,
-      ty: city.y + 0.5,
-      state: 'fight',
-      timer: 90,
-      anim: rng.int(8),
-      hp: 100,
-      dir: 0,
-    });
+  const cx = city.x + 0.5;
+  const cy = city.y + 0.5;
+  for (const u of world.units) {
+    if (u.job !== 'soldier') continue;
+    if (Math.hypot(u.x - cx, u.y - cy) > 8) continue;
+    u.state = 'fight';
+    u.timer = 120;
+    u.swing = 8;
   }
 
   world.battles = world.battles ?? [];
@@ -307,120 +304,367 @@ export function endBattles(world: World): void {
   });
 }
 
-// ============ 行军 ============
+// ============ 军队（v2 方阵）============
 
-/** 一支正在路上的军队 */
-export interface March {
-  /** 出征国 */
-  nation: number;
-  /** 出发城 */
-  from: number;
-  /** 目标城 */
-  to: number;
-  /** 随军单位 id */
-  units: number[];
-  /** 预计抵达 tick */
-  arrive: number;
-  /** 是否已经打过（防重复） */
-  resolved: boolean;
+/** 队列间距（格）：5 列 × 0.34 ≈ 1.4 格宽，加上人本身约 1.7 格，正好是「1.5~2 格簇拥」 */
+export const ARMY_SPACING = 0.26;
+/** 一排站几个人 */
+export const ARMY_COLS = 6;
+
+/** 每个阵位到阵心的距离上限（判断队形是否散掉） */
+function nextUnitId(world: World): number {
+  let n = 0;
+  for (const u of world.units) if (u.id >= n) n = u.id + 1;
+  return n;
 }
 
 /**
- * 发兵：在出发城生成一队士兵，朝目标城开拔。
+ * 组成一支军队：将军居中扛旗，近战在前两排，弓手在后一排。
  *
- * 这是「看得见的战争」的关键 —— 之前是判定时凭空在城下冒出一群人，
- * 现在玩家能看着一队人从这座城走出去、穿过原野、围到那座城下。
+ * 之所以要「生成时就排好」，是因为队形一旦在生成时确定，之后每 tick 只要
+ * 让每个人收敛回自己的位置，整支军队看上去就是一块会呼吸的板 ——
+ * 而不是一群各自乱走的散兵。
  */
-export function launchMarch(world: World, fromCity: number, toCity: number, nation: number, race: number): March | null {
-  const a = world.settlements[fromCity];
-  const b = world.settlements[toCity];
-  if (!a || !b) return null;
+export function formArmy(
+  world: World,
+  fromCity: number,
+  toCity: number,
+  nation: number,
+  race: number,
+): Army | null {
+  const home = world.settlements[fromCity];
+  const target = world.settlements[toCity];
+  if (!home || !target) return null;
 
   const rng = new Rng((world.tick * 7919 + toCity * 131) ^ 0x3ab1);
-  const n = 6 + rng.int(8);
-  const ids: number[] = [];
+  const total = 26 + rng.int(8); // 26~33 人：6 列 × 5 排 ≈ 1.5×1.3 格的一块铁板
+  const nArcher = Math.max(4, Math.round(total * 0.35));
+  const nMelee = Math.max(3, total - nArcher);
 
-  // 排成一列横队：垂直行军方向排开，才看得出「一支兵」
-  const dx0 = b.x - a.x;
-  const dy0 = b.y - a.y;
-  const dl = Math.max(0.001, Math.hypot(dx0, dy0));
-  const fx = dx0 / dl;
-  const fy = dy0 / dl;
+  const dx = target.x - home.x;
+  const dy = target.y - home.y;
+  const dist = Math.max(0.001, Math.hypot(dx, dy));
+  const fx = dx / dist;
+  const fy = dy / dist;
   const px = -fy;
   const py = fx;
 
-  for (let i = 0; i < n; i++) {
-    const side = (i - (n - 1) / 2) * 0.42;
-    const back = (i % 2) * 0.3;
-    const id = world.units.length;
+  const cx = home.x + 0.5 + fx * 1.3;
+  const cy = home.y + 0.5 + fy * 1.3;
+
+  let nid = nextUnitId(world);
+  const armyId = (world.tick & 0xffff) * 64 + (fromCity & 0x3f);
+  const units: number[] = [];
+
+  const add = (role: UnitRole, side: number, back: number, hp: number): number => {
+    const id = nid++;
     world.units.push({
       id,
       race,
       job: 'soldier',
       nation,
       home: fromCity,
-      x: a.x + 0.5 + fx * (0.8 - back) + px * side,
-      y: a.y + 0.5 + fy * (0.8 - back) + py * side,
-      tx: b.x + 0.5,
-      ty: b.y + 0.5,
+      x: cx + px * side + fx * back,
+      y: cy + py * side + fy * back,
+      tx: cx,
+      ty: cy,
       state: 'walk',
-      timer: 400,
+      timer: 600,
       anim: rng.int(8),
-      hp: 100,
-      dir: 2,
+      hp,
+      dir: Math.abs(fx) > Math.abs(fy) ? (fx > 0 ? 2 : 1) : (fy > 0 ? 0 : 3),
+      role,
+      army: armyId,
+      fx,
+      fy,
+      ax: side,
+      ay: back,
     });
-    ids.push(id);
-  }
+    units.push(id);
+    return id;
+  };
 
-  const dist = Math.hypot(b.x - a.x, b.y - a.y);
+  // 近战：将军前方的两排
+  let slot = 0;
+  for (let i = 0; i < nMelee; i++, slot++) {
+    const row = Math.floor(slot / ARMY_COLS);
+    const col = slot % ARMY_COLS;
+    add('melee', (col - (ARMY_COLS - 1) / 2) * ARMY_SPACING, -ARMY_SPACING * (row + 1), 100);
+  }
+  // 弓手：将军后方的排
+  for (let i = 0; i < nArcher; i++) {
+    const row = Math.floor(i / ARMY_COLS);
+    const col = i % ARMY_COLS;
+    add('archer', (col - (ARMY_COLS - 1) / 2) * ARMY_SPACING, ARMY_SPACING * (row + 1), 70);
+  }
+  // 将军：阵心，扛旗
+  const gid = add('general', 0, 0, 180);
+
   return {
+    id: armyId,
     nation,
+    race,
+    kind: 'attack',
+    initial: total + 1,
     from: fromCity,
     to: toCity,
-    units: ids,
-    arrive: world.tick + Math.max(30, Math.round(dist * 2.2)),
+    general: gid,
+    units,
+    x: cx,
+    y: cy,
+    fx,
+    fy,
+    state: 'march',
+    strength: 1,
+    morale: 1,
+    arrive: world.tick + Math.max(26, Math.round(dist * 8)),
+    timer: 0,
     resolved: false,
+    retries: 0,
   };
 }
 
-/** 行军推进：把军队朝目标城挪，到了就返回 true（由战役逻辑接管） */
-export function advanceMarch(world: World, m: March): boolean {
-  const target = world.settlements[m.to];
-  if (!target) return true;
-  if (world.tick >= m.arrive) return true;
+/**
+ * 每 tick 推进所有军队。
+ * 阵心朝目标走，成员朝自己的阵位收敛 —— 队形因此不会散。
+ */
+export function updateArmies(world: World): void {
+  if (!world.armies?.length) return;
+  const byId = new Map<number, Unit>();
+  for (const u of world.units) byId.set(u.id, u);
 
-  const alive = new Set(world.units.map((u) => u.id));
-  for (const id of m.units) {
-    if (!alive.has(id)) continue;
-    const u = world.units.find((x) => x.id === id);
-    if (!u) continue;
-    u.tx = target.x + 0.5;
-    u.ty = target.y + 0.5;
-    u.state = 'walk';
-    if (u.job === 'soldier') u.timer = 400;
+  for (const a of world.armies) {
+    if (a.resolved) continue;
+    a.units = a.units.filter((id) => byId.has(id));
+
+    if (a.state === 'march') {
+      const t = world.settlements[a.to];
+      if (t) {
+        const dx = t.x + 0.5 - a.x;
+        const dy = t.y + 0.5 - a.y;
+        const d = Math.hypot(dx, dy);
+        if (d <= 3.2) {
+          a.state = 'clash';
+        } else {
+          const spd = 0.115;
+          a.x += (dx / d) * spd;
+          a.y += (dy / d) * spd;
+          a.fx = dx / d;
+          a.fy = dy / d;
+        }
+      }
+    } else if (a.state === 'retreat') {
+      // 败退：整队往回跑，阵型不散 —— 玩家看到的应该是「潮水退去」，不是「人跑了」
+      const home = world.settlements[a.from];
+      if (home) {
+        const dx = home.x + 0.5 - a.x;
+        const dy = home.y + 0.5 - a.y;
+        const d = Math.hypot(dx, dy);
+        if (d <= 2.6) {
+          a.state = 'rally';
+          a.timer = world.tick + 150;
+        } else {
+          const spd = 0.135;
+          a.x += (dx / d) * spd;
+          a.y += (dy / d) * spd;
+          a.fx = dx / d;
+          a.fy = dy / d;
+        }
+      } else {
+        a.resolved = true;
+      }
+    }
+
+    const px = -a.fy;
+    const py = a.fx;
+
+    // 交战中不再把士兵拉回阵位 —— 否则「冲锋力」和「归位力」互相抵消，
+    // 两军会僵持在半格之外互相瞪眼（这是第一版真实踩到的坑）。
+    if (a.state === 'clash') {
+      for (const id of a.units) {
+        const u = byId.get(id);
+        if (!u) continue;
+        u.anim++;
+      }
+      continue;
+    }
+
+    for (const id of a.units) {
+      const u = byId.get(id);
+      if (!u) continue;
+      const tx = a.x + px * (u.ax ?? 0) + a.fx * (u.ay ?? 0);
+      const ty = a.y + py * (u.ax ?? 0) + a.fy * (u.ay ?? 0);
+      const dx = tx - u.x;
+      const dy = ty - u.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 0.015) {
+        const k = Math.min(0.34, 0.2 + d * 0.4);
+        u.x += dx * k;
+        u.y += dy * k;
+      }
+      u.fx = a.fx;
+      u.fy = a.fy;
+      u.anim++;
+      if (u.state !== 'fight') u.state = 'walk';
+      if (Math.abs(a.fx) > Math.abs(a.fy)) u.dir = a.fx > 0 ? 2 : 1;
+      else u.dir = a.fy > 0 ? 0 : 3;
+    }
   }
-  return false;
 }
 
-/** 抵达后收编：把行军的士兵改成守城/冲锋状态 */
-export function arriveMarch(world: World, m: March, attackerWins: boolean): void {
-  const alive = new Set(world.units.map((u) => u.id));
-  const px = world.settlements[m.to]?.x ?? 0;
-  const py = world.settlements[m.to]?.y ?? 0;
-  for (const id of m.units) {
-    if (!alive.has(id)) continue;
-    const u = world.units.find((x) => x.id === id);
+/** 抵达后收编：赢了留下驻守，输了朝出发城退 */
+export function arriveArmy(world: World, a: Army, attackerWins: boolean, keepArmy = false): void {
+  const byId = new Map<number, Unit>();
+  for (const u of world.units) byId.set(u.id, u);
+  const home = world.settlements[a.from];
+  for (const id of a.units) {
+    const u = byId.get(id);
     if (!u) continue;
+    if (keepArmy) {
+      u.state = 'walk';
+      u.timer = 200;
+      continue;
+    }
     if (attackerWins) {
       u.state = 'idle';
       u.timer = 60;
+      u.army = undefined;
+      u.role = 'melee';
     } else {
-      // 打输了：这批人从地图上撤走（败退）
-      u.x = px + (u.x - px) * 2.4;
-      u.y = py + (u.y - py) * 2.4;
+      // 败退：朝出发城方向撤，队形不再维持
       u.state = 'walk';
-      u.tx = u.x + (u.x - px) * 3;
-      u.ty = u.y + (u.y - py) * 3;
+      u.timer = 120;
+      u.army = undefined;
+      u.role = 'melee';
+      if (home) {
+        u.tx = home.x + 0.5 + (u.x - home.x) * 0.1;
+        u.ty = home.y + 0.5 + (u.y - home.y) * 0.1;
+      }
     }
   }
+}
+
+/**
+ * 守军出战：城被围时，城里的兵力在城墙下列成方阵迎敌。
+ *
+ * 为什么不直接「攻击方撞墙」：用户要看的是一块方阵撞另一块方阵。
+ * 守军从城里走出来，两团人在城下相遇，才会出现「两个大方块逐渐逼近」的画面。
+ */
+export function formGarrison(world: World, cityId: number, foeX: number, foeY: number, foeCount = 26): Army | null {
+  const city = world.settlements[cityId];
+  if (!city || city.nation < 0) return null;
+
+  const rng = new Rng((world.tick * 6151 + cityId * 37) ^ 0x2cd7);
+  // 守军规模贴着攻方的 75% 上下浮动：太弱会被一波推平（看不到拉锯），
+  // 太强则攻方永远打不下城（战争失去意义）。
+  const total = Math.max(14, Math.min(36, Math.round(foeCount * (0.82 + rng.next() * 0.3))));
+  const nArcher = Math.max(3, Math.round(total * 0.34));
+  const nMelee = Math.max(4, total - nArcher);
+
+  const dx = foeX - (city.x + 0.5);
+  const dy = foeY - (city.y + 0.5);
+  const dist = Math.max(0.001, Math.hypot(dx, dy));
+  const fx = dx / dist;
+  const fy = dy / dist;
+  const px = -fy;
+  const py = fx;
+
+  // 阵心：城门外一点点，正对敌人
+  const cx = city.x + 0.5 + fx * 1.5;
+  const cy = city.y + 0.5 + fy * 1.5;
+
+  let nid = nextUnitId(world);
+  const armyId = ((world.tick + 7) & 0xffff) * 64 + (cityId & 0x3f) + 32;
+  const units: number[] = [];
+
+  const add = (role: UnitRole, side: number, back: number, hp: number): number => {
+    const id = nid++;
+    world.units.push({
+      id, race: city.race, job: 'soldier', nation: city.nation, home: cityId,
+      x: cx + px * side + fx * back,
+      y: cy + py * side + fy * back,
+      tx: cx, ty: cy,
+      state: 'fight', timer: 600, anim: rng.int(8), hp,
+      dir: Math.abs(fx) > Math.abs(fy) ? (fx > 0 ? 2 : 1) : (fy > 0 ? 0 : 3),
+      role, army: armyId, fx, fy, ax: side, ay: back,
+    });
+    units.push(id);
+    return id;
+  };
+
+  let slot = 0;
+  for (let i = 0; i < nMelee; i++, slot++) {
+    const row = Math.floor(slot / ARMY_COLS);
+    const col = slot % ARMY_COLS;
+    add('melee', (col - (ARMY_COLS - 1) / 2) * ARMY_SPACING, -ARMY_SPACING * (row + 1), 100);
+  }
+  for (let i = 0; i < nArcher; i++) {
+    const row = Math.floor(i / ARMY_COLS);
+    const col = i % ARMY_COLS;
+    add('archer', (col - (ARMY_COLS - 1) / 2) * ARMY_SPACING, ARMY_SPACING * (row + 1), 70);
+  }
+  const gid = add('general', 0, 0, 180);
+
+  return {
+    id: armyId, nation: city.nation, race: city.race,
+    kind: 'defend', initial: total + 1,
+    from: cityId, to: cityId, general: gid, units,
+    x: cx, y: cy, fx, fy,
+    state: 'clash', strength: 1, morale: 1,
+    arrive: world.tick, timer: 0, resolved: false, retries: 0,
+  };
+}
+
+/**
+ * 补员：撤退回城的军队在城里重新拉人，把编制补齐再压上去。
+ *
+ * 这是「进攻—受挫—撤退—再集结—反扑」里最容易被忽略的一环：
+ * 如果没有补员，败退的军队只会一路缩水，再也组织不起第二次进攻，
+ * 战场就变成「一波流」，没有呼吸感。
+ */
+export function reinforceArmy(world: World, a: Army, n: number): number {
+  const home = world.settlements[a.from];
+  if (!home || !home.alive || home.ruin) return 0;
+  const rng = new Rng((world.tick * 977 + a.id * 13) ^ 0x71b3);
+  let nid = nextUnitId(world);
+  let added = 0;
+  const px = -a.fy;
+  const py = a.fx;
+
+  for (let i = 0; i < n; i++) {
+    if (a.units.length >= a.initial) break;
+    const melee = a.units.length < a.initial * 0.62;
+    const row = Math.floor(a.units.length / ARMY_COLS);
+    const col = a.units.length % ARMY_COLS;
+    const side = (col - (ARMY_COLS - 1) / 2) * ARMY_SPACING;
+    const back = (melee ? -1 : 1) * ARMY_SPACING * (row + 1);
+    const id = nid++;
+    world.units.push({
+      id,
+      race: a.race,
+      job: 'soldier',
+      nation: a.nation,
+      home: a.from,
+      x: a.x + px * side + a.fx * back,
+      y: a.y + py * side + a.fy * back,
+      tx: a.x,
+      ty: a.y,
+      state: 'walk',
+      timer: 600,
+      anim: rng.int(8),
+      hp: 100,
+      dir: 2,
+      role: melee ? 'melee' : 'archer',
+      army: a.id,
+      fx: a.fx,
+      fy: a.fy,
+      ax: side,
+      ay: back,
+    });
+    a.units.push(id);
+    added++;
+  }
+  a.strength = Math.max(0, Math.min(1, a.units.length / Math.max(1, a.initial)));
+  a.morale = a.strength;
+  return added;
 }
