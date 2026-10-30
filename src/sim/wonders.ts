@@ -177,7 +177,7 @@ export function wonderBuff(world: World, n: Nation): {
 } {
   const own = (k: number) => wonderOwner(world, k) === n.id;
   return {
-    tech: own(0) ? 1.5 : 1,
+    tech: own(0) ? 1.32 : 1,
     cap: own(1) ? 1.25 : 1,
     power: own(2) ? 1.2 : 1,
     aggression: own(3) ? 1.5 : 1,

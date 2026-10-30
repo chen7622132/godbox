@@ -121,6 +121,36 @@ export class Inspector {
       }
     }
 
+    // ---- 奇观：谁在造、造到几成 ----
+    const wk = world.wonders?.find((w) => w.city === s.id && !w.ruined) ?? null;
+    const built = world.wonders?.find((w) => w.city === s.id && w.built) ?? null;
+    if (built) {
+      rows.push('<div class="sep"></div>');
+      rows.push(`<div class="sec-title">世界奇观</div>`);
+      rows.push(
+        `<div class="king-row"><div class="kr-head"><span class="kn">${built.name}</span>` +
+        `<span class="ks">建于第 ${Math.round(built.finished)} 年</span></div>` +
+        `<div class="kd">当世唯一。见此物者，不论敌友，皆须仰视。</div></div>`,
+      );
+    } else if (wk) {
+      rows.push('<div class="sep"></div>');
+      rows.push(`<div class="sec-title">工程进行中</div>`);
+      rows.push(
+        `<div class="king-row"><div class="kr-head"><span class="kn">${wk.name}</span>` +
+        `<span class="ks">${Math.round(wk.progress * 100)}%</span></div>` +
+        `<div class="kd">始于第 ${Math.round(wk.started)} 年。城破则工废。</div></div>`,
+      );
+    }
+
+    // ---- 同盟 ----
+    if (n && n.allies && n.allies.length) {
+      const allyNames = n.allies
+        .map((id) => world.nations[id]?.name)
+        .filter(Boolean)
+        .join('、');
+      if (allyNames) rows.push(row('姻亲', `<span style="color:#7fd07f">${allyNames}</span>`));
+    }
+
     // ---- 民情：情绪系统是核心机制，玩家必须能在界面上看见 ----
     const mood = s.mood ?? 'normal';
     rows.push('<div class="sep"></div>');

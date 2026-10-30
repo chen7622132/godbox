@@ -276,8 +276,8 @@ function growSettlements(world: World): void {
     // 这是阻止「强者恒强」的第一道闸门
     const nat = s.nation >= 0 ? world.nations[s.nation] : undefined;
     if (nat && delta > 0) {
-      const over = Math.max(0, nat.cities.length - 6);
-      if (over > 0) delta *= Math.max(0.3, 1 - over * 0.075);
+      const over = Math.max(0, nat.cities.length - 5);
+      if (over > 0) delta *= Math.max(0.28, 1 - over * 0.095);
     }
 
     // 领土太小（被别国挤死）则饿死
@@ -533,7 +533,7 @@ function updateNations(world: World): void {
     }
 
     // 帝国裂解：疆域过大且已经打过仗的国家，边地会先离心
-    if (!n.fractured && n.cities.length >= 8 && n.warCount >= 1 && rng.chance(0.006)) {
+    if (!n.fractured && n.cities.length >= 7 && n.warCount >= 1 && rng.chance(0.011)) {
       splitNation(world, n);
     }
   }
@@ -608,6 +608,11 @@ function createNation(world: World, race: number, members: Settlement[]): Nation
     dynasty: '',
     warCount: 0,
     fractured: false,
+    allies: [],
+    allyKingA: -1,
+    allyKingB: -1,
+    allyUntil: 0,
+    betrayals: 0,
   };
   world.nations.push(n);
   for (const m of members) {
@@ -732,12 +737,108 @@ function warlike(world: World, n: Nation): number {
   return f * wonderBuff(world, n).aggression;
 }
 
+/**
+ * 联姻与背叛。《十字军之王》的核心洞察：盟约不是纸，是「两家人」。
+ * 所以它的有效期绑在具体的人身上 —— 谁死了，盟约就淡了；
+ * 而一旦强弱逆转，强者就会想起「这块地本来该是我的」。
+ */
+function handleAlliances(world: World): void {
+  const alive = world.nations.filter((n) => n.alive);
+
+  for (let i = 0; i < alive.length; i++) {
+    for (let j = i + 1; j < alive.length; j++) {
+      const a = alive[i];
+      const b = alive[j];
+
+      // ---- 已有盟约：检查是否随人而亡 ----
+      if (a.allies.includes(b.id)) {
+        // 君主更替不再立即解约：还有期限，且先王死后仍有一半概率维持
+        const kingChanged = a.allyKingA !== a.king || a.allyKingB !== b.king;
+        const still = world.year < a.allyUntil && !(kingChanged && rng.chance(0.5));
+        if (!still) {
+          a.allies = a.allies.filter((x) => x !== b.id);
+          b.allies = b.allies.filter((x) => x !== a.id);
+          logEvent(
+            world, 'peace',
+            `${a.name} 与 ${b.name} 的盟约随先王一同入土。两国各归其道。`,
+            a.race, 1,
+            { cause: '盟约系于人身，人亡则约解' },
+          );
+          continue;
+        }
+
+        // ---- 背叛：强者忍不住 ----
+        const ka = world.agents[a.king];
+        const kb = world.agents[b.king];
+        if (!ka || !kb) continue;
+        const greedy = ka.traits.includes('贪婪') || ka.traits.includes('残暴') || ka.ambition === 'conquer';
+        const stronger = a.cities.length >= Math.max(3, b.cities.length * 1.4);
+        if (greedy && stronger && rng.chance(0.008)) {
+          a.allies = a.allies.filter((x) => x !== b.id);
+          b.allies = b.allies.filter((x) => x !== a.id);
+          a.betrayals++;
+          declareWar(world, a, b);
+          logEvent(
+            world, 'betray',
+            `${a.name} 撕毁与 ${b.name} 的盟约。使者还在路上，前锋已抵城下。`,
+            a.race, 2,
+            {
+              actor: ka.name,
+              cause: `${a.name} 已强于 ${b.name} 一倍，盟约不再划算`,
+              quote: '「盟约是给势均力敌的人签的。」',
+            },
+          );
+        }
+        continue;
+      }
+
+      // ---- 新盟约 ----
+      if (a.enemies.includes(b.id)) continue;
+      if (a.cities.length < 2 || b.cities.length < 2) continue;
+      // 势均力敌的不结盟 —— 弱势方才需要靠山
+      const ratio = Math.min(a.cities.length, b.cities.length) / Math.max(a.cities.length, b.cities.length);
+      if (ratio > 0.9) continue;
+      // 血债太深，谈不拢
+      if ((a.grudge[b.id] ?? 0) > 400 || (b.grudge[a.id] ?? 0) > 400) continue;
+      const ca = nationCenter(world, a);
+      const cb = nationCenter(world, b);
+      if (Math.hypot(ca.x - cb.x, ca.y - cb.y) > 85) continue;
+      if (!rng.chance(0.006)) continue;
+
+      a.allies.push(b.id);
+      b.allies.push(a.id);
+      a.allyKingA = a.king;
+      a.allyKingB = b.king;
+      b.allyKingA = b.king;
+      b.allyKingB = a.king;
+      const until = world.year + 60 + rng.next() * 90;
+      a.allyUntil = until;
+      b.allyUntil = until;
+
+      const ka = world.agents[a.king];
+      const weakIsA = a.cities.length < b.cities.length;
+      logEvent(
+        world, 'peace',
+        `${weakIsA ? a.name : b.name} 遣使求婚，${weakIsA ? b.name : a.name} 许之。两国结为姻亲，共进退。`,
+        weakIsA ? a.race : b.race, 2,
+        {
+          actor: ka?.name,
+          cause: `${weakIsA ? a.name : b.name} 势弱，须得一强援`,
+          quote: '「我嫁出去的不是女儿，是十年的太平。」',
+        },
+      );
+    }
+  }
+}
+
 function updateDiplomacy(world: World): void {
   const alive = world.nations.filter((n) => n.alive);
+  handleAlliances(world);
   for (let i = 0; i < alive.length; i++) {
     for (let j = i + 1; j < alive.length; j++) {
       const a = alive[i], b = alive[j];
       if (a.enemies.includes(b.id)) continue;
+      if (a.allies.includes(b.id)) continue; // 盟友之间不打
       if (a.cities.length < 3 || b.cities.length < 3) continue;
       // 新生的国家需要时间巩固内部，不会立刻发动战争
       if (world.year - a.founded < 45 || world.year - b.founded < 45) continue;
@@ -750,7 +851,7 @@ function updateDiplomacy(world: World): void {
       const sameRace = a.race === b.race;
       if (sameRace && a.tech < 4) continue;
 
-      const base = sameRace ? 0.0015 : 0.009;
+      const base = sameRace ? 0.0012 : 0.0072;
       // 性格真的会改变历史：好战之君把国家拖进战争，仁厚之君守住太平
       const p = base * (a.aggression + b.aggression) * warlike(world, a) * warlike(world, b);
       if (rng.chance(p)) declareWar(world, a, b);
@@ -792,6 +893,8 @@ function updateDiplomacy(world: World): void {
 }
 
 function declareWar(world: World, a: Nation, b: Nation): void {
+  a.allies = a.allies.filter((x) => x !== b.id);
+  b.allies = b.allies.filter((x) => x !== a.id);
   a.enemies.push(b.id);
   b.enemies.push(a.id);
   a.warCount++;
@@ -859,6 +962,11 @@ function nationPower(world: World, n: Nation, attacking: boolean): number {
   }
   // 奇观加成（矮人的深炉 +20%）
   power *= wonderBuff(world, n).power;
+  // 盟友援助：每个生存的盟友 +12%
+  for (const aid of n.allies) {
+    const ally = world.nations[aid];
+    if (ally && ally.alive) power *= 1.12;
+  }
   return power;
 }
 

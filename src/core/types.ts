@@ -193,6 +193,15 @@ export interface Nation {
   warCount: number;
   /** 是否已经分裂过 */
   fractured: boolean;
+  /** 同盟国 id（联姻结盟） */
+  allies: number[];
+  /** 同盟在双方哪一位君主死后失效 */
+  allyKingA: number;
+  allyKingB: number;
+  /** 盟约到期年份（人死约不必死，但有期限） */
+  allyUntil: number;
+  /** 背叛次数 */
+  betrayals: number;
 }
 
 // ============ 有名个体 ============
