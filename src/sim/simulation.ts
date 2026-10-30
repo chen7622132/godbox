@@ -682,6 +682,7 @@ function appointKing(world: World, n: Nation): void {
     citiesFounded: 0,
     reign: 0,
     deeds: [],
+    grudges: [],
     cause: null,
     posthumous: '',
     diedYear: null,
@@ -708,6 +709,24 @@ function appointKing(world: World, n: Nation): void {
       // 子承父仇：父亲是被谁杀的，这儿子一上台就记着
       if (father && father.ambition === 'revenge' && father.killedBy >= 0) {
         n.grudge[father.killedBy] = (n.grudge[father.killedBy] ?? 0) + 400;
+      }
+      // 更要紧的是：先王没报完的仇，全部传给新王。
+      // 这一条让「仇恨」能跨代延续，编年史里才会出现几十年前那笔账。
+      if (father) {
+        for (const g of father.grudges ?? []) {
+          if (!g.paid && world.year < g.until) {
+            a.grudges.push({ ...g });
+          }
+        }
+        if (a.grudges.length > 0 && father.grudges.length > 0) {
+          const first = a.grudges[0];
+          logEvent(
+            world, 'feud',
+            a.name + ' 即位之日，先祭宗庙，告先王曰：' + first.cause + ' 之仇，儿不敢忘。',
+            n.race, 1,
+            { actor: a.name, cause: '先王 ' + father.name + ' 未报之仇' },
+          );
+        }
       }
     }
   }
@@ -913,6 +932,32 @@ function declareWar(world: World, a: Nation, b: Nation): void {
   const kb = world.agents[b.king];
   const nameA = ka?.name ?? '王';
   const nameB = kb?.name ?? '王';
+  // 先看国王个人身上有没有「还没报的仇」——这是最有分量的开战理由
+  {
+    const kg = ka ? ka.grudges.find((g) => g.target === b.id && !g.paid && world.year < g.until) : undefined;
+    if (kg && ka) {
+      kg.paid = true;
+      a.grudge[b.id] = 0;
+      logEvent(
+        world, 'war',
+        nameA + ' 誓师：昔年 ' + kg.cause + '，死 ' + grandNum(kg.dead) + '，此仇未报。三军皆哭，遂发兵。',
+        a.race, 2,
+        {
+          actor: nameA,
+          quote: '「我等这天，等了很多年。」',
+          cause: '为「' + kg.cause + '」之仇（' + grandNum(kg.dead) + '）',
+        },
+      );
+      ka.ambition = 'revenge';
+      ka.deeds.push({
+        year: Math.round(world.year),
+        text: '为报「' + kg.cause + '」之仇，举兵伐 ' + b.name,
+        weight: 2,
+      });
+      return;
+    }
+  }
+
   const grudge = (a.grudge[b.id] ?? 0) + (b.grudge[a.id] ?? 0);
 
   if (grudge > 600 && ka) {
@@ -1250,8 +1295,20 @@ function conquer(world: World, a: Nation, b: Nation, target: Settlement, attacke
   }
   a.techProgress += 8;
 
-  // 血债入账：被杀的人不会白死，这笔账会变成二十年后的战争
+  // 血债入账：国家层面记一笔，国王个人也记一笔
   b.grudge[a.id] = (b.grudge[a.id] ?? 0) + lost;
+  {
+    const bk = b.king >= 0 ? world.agents[b.king] : undefined;
+    if (bk && bk.alive) {
+      bk.grudges.push({
+        target: a.id,
+        cause: '失 ' + target.name,
+        dead: lost,
+        until: world.year + 220,
+        paid: false,
+      });
+    }
+  }
   const ak = world.agents[a.king];
   if (ak) {
     ak.citiesTaken++;

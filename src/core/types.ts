@@ -216,6 +216,20 @@ export const AMBITION_NAME: Record<Ambition, string> = {
   wealth: '富国强兵',
 };
 
+/** 一笔记在个人头上的仇 */
+export interface PersonalGrudge {
+  /** 仇人所在国 */
+  target: number;
+  /** 结仇原因，直接写进叙事 */
+  cause: string;
+  /** 死了多少人 */
+  dead: number;
+  /** 到哪一年为止仍算「血未冷」 */
+  until: number;
+  /** 是否已经清算 */
+  paid: boolean;
+}
+
 /** 一条事迹（列传的最小单位） */
 export interface Deed {
   year: number;
@@ -265,6 +279,11 @@ export interface Agent {
   reign: number;
   /** 事迹流（列传直接由它拼出来） */
   deeds: Deed[];
+  /**
+   * 个人的血仇。这是「史诗感的模拟层燃料」：
+   * 战争不是因为随机数打起来的，是因为某个人的城被夺了、人被杀了他记着。
+   */
+  grudges: PersonalGrudge[];
   /** 死因 */
   cause: string | null;
   /** 谥号（死后一字定评） */

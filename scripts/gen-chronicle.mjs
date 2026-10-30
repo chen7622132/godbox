@@ -8,6 +8,8 @@ seedRaces(world, [0, 1, 2, 3]);
 const TICKS = Number(process.env.TICKS ?? 6000);
 for (let i = 0; i < TICKS; i++) stepWorld(world);
 
+const withG = world.agents.filter(a => (a.grudges||[]).length);
+console.log('GRUDGES: 有仇的君主', withG.length, '/ 全部', world.agents.length, '总仇数', world.agents.reduce((n,a)=>n+((a.grudges||[]).length),0));
 console.log('BEASTS:', JSON.stringify(world.beasts.map(b => ({ n: b.name, alive: b.alive, hp: b.hp, kills: b.kills, razed: b.razed, x: b.x, y: b.y, lastAct: b.lastAct }))));
 console.log(`=== tick=${world.tick} 城=${world.settlements.filter(s => s.alive && !s.ruin).length} 国=${world.nations.filter(n => n.alive).length} ===\n`);
 

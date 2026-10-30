@@ -170,6 +170,7 @@ export function deserialize(blob: unknown): World {
     if (a.citiesFounded === undefined) a.citiesFounded = 0;
     if (a.reign === undefined) a.reign = 0;
     if (!a.deeds) a.deeds = [];
+    if (!a.grudges) a.grudges = [];
     if (a.cause === undefined) a.cause = null;
     if (a.posthumous === undefined) a.posthumous = '';
     if (a.diedYear === undefined) a.diedYear = null;
