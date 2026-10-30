@@ -8,6 +8,7 @@ import {
 } from '../core/types';
 import { Narrator, grandNum } from '../core/narrative';
 import { updateBeasts, maybeAwakenBeast } from './beasts';
+import { updateWonders, wonderBuff } from './wonders';
 import { findLandNear } from '../core/world';
 
 const rng = new Rng(1);
@@ -209,6 +210,7 @@ export function stepWorld(world: World): void {
   growSettlements(world);
   updateMoods(world);
   if (world.tick % 30 === 0) updateBeasts(world);
+  if (world.tick % 40 === 0) updateWonders(world);
   if (world.tick % 3 === 0) expandTerritories(world);
   if (world.tick % 2 === 0) trySpawnSettlements(world);
   if (world.tick % 5 === 0) updateNations(world);
@@ -248,7 +250,7 @@ function settlementCap(world: World, s: Settlement): number {
   if (race.mineBonus > 0 && (t === T.Hill || t === T.Mountain)) cap *= 1 + race.mineBonus;
   if (race.forestPower > 1 && t === T.Forest) cap *= 1.2;
 
-  return Math.max(18, cap);
+  return Math.max(18, cap * (n ? wonderBuff(world, n).cap : 1));
 }
 
 function growSettlements(world: World): void {
@@ -498,7 +500,7 @@ function updateNations(world: World): void {
       const mineMul = race.mineBonus > 0 && n.cities.length > 0
         ? 1 + (mineCities / n.cities.length) * race.mineBonus
         : 1;
-      n.techProgress += totalPop * 0.0003 * race.tech * mineMul;
+      n.techProgress += totalPop * 0.0003 * race.tech * mineMul * wonderBuff(world, n).tech;
       if (n.techProgress >= 100) {
         n.techProgress = 0;
         n.tech++;
@@ -727,7 +729,7 @@ function warlike(world: World, n: Nation): number {
   if (k.traits.some((t) => DOVE_TRAITS.includes(t))) f *= 0.5;
   if (k.ambition === 'conquer' || k.ambition === 'revenge') f *= 1.5;
   if (k.ambition === 'peace') f *= 0.55;
-  return f;
+  return f * wonderBuff(world, n).aggression;
 }
 
 function updateDiplomacy(world: World): void {
@@ -855,6 +857,8 @@ function nationPower(world: World, n: Nation, attacking: boolean): number {
     const ratio = forestCities / alive;
     power *= 1 + (race.forestPower - 1) * ratio;
   }
+  // 奇观加成（矮人的深炉 +20%）
+  power *= wonderBuff(world, n).power;
   return power;
 }
 

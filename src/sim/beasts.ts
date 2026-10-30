@@ -85,8 +85,13 @@ function cityDefense(world: World, s: Settlement): number {
 function preyCity(world: World, b: Beast): Settlement | null {
   let best: Settlement | null = null;
   let bestScore = Infinity;
+  // 有奇观在建的城有重兵护工，巨兽不碰
+  const guarded = new Set(
+    (world.wonders ?? []).filter((w) => !w.built && !w.ruined).map((w) => w.city),
+  );
   for (const s of world.settlements) {
     if (!s.alive || s.ruin) continue;
+    if (guarded.has(s.id)) continue;
     const d = Math.hypot(s.x - b.x, s.y - b.y);
     if (d > 12) continue;
     // 分数越低越想吃：人口少、城墙薄、距离近

@@ -91,6 +91,22 @@ await moodShot(0, 'happy', 'sing', 'mood-happy');
 await moodShot(1, 'sad', 'cry', 'mood-sad');
 await moodShot(2, 'angry', 'tantrum', 'mood-angry');
 
+// 奇观特写：手动放一座已建成的世界之树
+const ws = live[0];
+world.wonders = [{ kind: 1, name: '月桂母树', nation: ws.nation, city: ws.id, progress: 1, built: true, started: 100, finished: 300, ruined: false }];
+r.cam.zoom = 12; r.cam.x = ws.x + 0.5; r.cam.y = ws.y + 0.5;
+r.markDirty(); r.camDirty = true; r.render(world);
+writeFileSync('/tmp/wonder-tree.png', await display.encode('png'));
+console.log('  → /tmp/wonder-tree.png');
+world.wonders = [{ kind: 2, name: '深炉', nation: ws.nation, city: ws.id, progress: 1, built: true, started: 100, finished: 300, ruined: false }];
+r.markDirty(); r.camDirty = true; r.render(world);
+writeFileSync('/tmp/wonder-forge.png', await display.encode('png'));
+console.log('  → /tmp/wonder-forge.png');
+world.wonders = [{ kind: 0, name: '万卷之城', nation: ws.nation, city: ws.id, progress: 1, built: true, started: 100, finished: 300, ruined: false }];
+r.markDirty(); r.camDirty = true; r.render(world);
+writeFileSync('/tmp/wonder-lib.png', await display.encode('png'));
+console.log('  → /tmp/wonder-lib.png');
+
 // 巨兽特写：把一只巨兽挪到城边，确认画得出来
 if (world.beasts.length) {
   const b0 = world.beasts[0];

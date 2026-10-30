@@ -267,6 +267,7 @@ export class Renderer {
 
     this.drawRoads(world);
     this.drawSettlements(world);
+    this.drawWonders(world);
     this.drawBeasts(world);
     this.drawHover();
   }
@@ -525,6 +526,189 @@ export class Renderer {
   }
 
   // ==================== 道路 ====================
+
+  // ==================== 世界奇观 ====================
+
+  /**
+   * 已建成的奇观。它是整张地图上唯一「超出比例尺」的建筑，
+   * 远看就能认出「那座城不一样」—— 这就是奇观该有的视觉重量。
+   */
+  private drawWonders(world: World): void {
+    const z = this.cam.zoom;
+    if (z < 4 || !world.wonders?.length) return;
+    const { ctx } = this;
+
+    for (const w of world.wonders) {
+      if (!w.built) continue;
+      const s = world.settlements[w.city];
+      if (!s) continue;
+      const [sx, sy] = this.worldToScreen(s.x + 0.5, s.y + 0.5);
+      if (sx < -120 || sy < -120 || sx > this.cssW + 120 || sy > this.cssH + 120) continue;
+
+      const u = Math.max(2, Math.round(z * 0.78));
+      const cx = Math.round(sx);
+      const by = Math.round(sy + u * 1.6); // 建筑底边
+
+      ctx.save();
+
+      // 圣地：先在脚下铺一圈空地，环绕一圈更亮的草色，
+      // 让它周围的树「退开」—— 奇观必须有一块专属的地面
+      const pad = u * 7.5;
+      ctx.fillStyle = 'rgba(118,177,83,0.95)';
+      ctx.beginPath();
+      ctx.ellipse(cx, by, pad, pad * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(140,220,106,0.95)';
+      ctx.beginPath();
+      ctx.ellipse(cx, by, pad * 0.74, pad * 0.42, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(209,231,113,0.5)';
+      ctx.beginPath();
+      ctx.ellipse(cx, by, pad * 0.46, pad * 0.26, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 光晕：让它在远看时也跳出来
+      const halo = ctx.createRadialGradient(cx, by - u * 3, u, cx, by - u * 3, u * 9);
+      halo.addColorStop(0, 'rgba(255,236,160,0.22)');
+      halo.addColorStop(1, 'rgba(255,236,160,0)');
+      ctx.fillStyle = halo;
+      ctx.fillRect(cx - u * 9, by - u * 12, u * 18, u * 18);
+
+      if (w.kind === 1) {
+        // ---- 精灵：月桂母树（一棵大到不合比例的树）----
+        const trunkW = u * 3.4;
+        ctx.fillStyle = 'rgba(12,30,14,0.34)';
+        ctx.beginPath();
+        ctx.ellipse(cx, by + u * 0.4, u * 8.2, u * 2.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // 树干
+        ctx.fillStyle = '#4a3524';
+        ctx.fillRect(cx - trunkW / 2, by - u * 7.5, trunkW, u * 7.5);
+        ctx.fillStyle = '#63472f';
+        ctx.fillRect(cx - trunkW / 2, by - u * 7.5, Math.max(1, trunkW * 0.45), u * 7.5);
+        // 树冠：三层
+        const canopy = (cy: number, r: number, col: string) => {
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, r, r * 0.72, 0, 0, Math.PI * 2);
+          ctx.fill();
+        };
+        canopy(by - u * 7.2, u * 7.4, '#174f18');
+        canopy(by - u * 8.6, u * 6.2, '#1F7020');
+        canopy(by - u * 10.2, u * 4.8, '#2f8a36');
+        canopy(by - u * 11.6, u * 3.4, '#46A052');
+        canopy(by - u * 12.6, u * 2.0, '#8ACF55');
+        // 金色光点
+        ctx.fillStyle = 'rgba(255,226,140,0.85)';
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          ctx.fillRect(
+            Math.round(cx + Math.cos(a) * u * 5.2),
+            Math.round(by - u * 9.6 + Math.sin(a) * u * 3.4),
+            Math.max(1, u * 0.6),
+            Math.max(1, u * 0.6),
+          );
+        }
+      } else if (w.kind === 0) {
+        // ---- 人类：万卷之城（白色圆顶 + 柱廊）----
+        const wdt = u * 8;
+        const hgt = u * 4;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.beginPath();
+        ctx.ellipse(cx, by, u * 4.6, u * 1.3, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // 主体
+        ctx.fillStyle = '#d9d2bd';
+        ctx.fillRect(cx - wdt / 2, by - hgt, wdt, hgt);
+        ctx.fillStyle = '#b8b09a';
+        ctx.fillRect(cx + wdt * 0.2, by - hgt, wdt * 0.3, hgt);
+        // 柱廊
+        ctx.fillStyle = '#f0ead6';
+        for (let i = 0; i < 5; i++) {
+          ctx.fillRect(cx - wdt / 2 + u * 0.6 + i * u * 1.6, by - hgt, u * 0.7, hgt);
+        }
+        // 圆顶
+        ctx.fillStyle = '#7fa8c9';
+        ctx.beginPath();
+        ctx.ellipse(cx, by - hgt, u * 2.4, u * 2.2, 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#a8cbe0';
+        ctx.beginPath();
+        ctx.ellipse(cx - u * 0.7, by - hgt - u * 0.7, u * 1.1, u * 1.2, 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+        // 塔尖
+        ctx.fillStyle = '#ffd447';
+        ctx.fillRect(cx - u * 0.25, by - hgt - u * 3.1, Math.max(1, u * 0.5), u * 1.0);
+      } else if (w.kind === 2) {
+        // ---- 矮人：深炉（黑色高塔 + 炉口红光）----
+        const wdt = u * 5;
+        const hgt = u * 9;
+        ctx.fillStyle = 'rgba(0,0,0,0.34)';
+        ctx.beginPath();
+        ctx.ellipse(cx, by, u * 3.6, u * 1.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // 塔身（上窄下宽）
+        ctx.fillStyle = '#3a3a3c';
+        ctx.beginPath();
+        ctx.moveTo(cx - wdt / 2, by);
+        ctx.lineTo(cx + wdt / 2, by);
+        ctx.lineTo(cx + wdt * 0.3, by - hgt);
+        ctx.lineTo(cx - wdt * 0.3, by - hgt);
+        ctx.closePath();
+        ctx.fill();
+        // 亮面
+        ctx.fillStyle = '#585a5c';
+        ctx.beginPath();
+        ctx.moveTo(cx - wdt / 2, by);
+        ctx.lineTo(cx - wdt * 0.12, by);
+        ctx.lineTo(cx - wdt * 0.08, by - hgt);
+        ctx.lineTo(cx - wdt * 0.3, by - hgt);
+        ctx.closePath();
+        ctx.fill();
+        // 炉口：脉动的红光
+        const glow = 0.55 + Math.sin(Date.now() / 240) * 0.35;
+        ctx.fillStyle = `rgba(246,45,20,${glow.toFixed(2)})`;
+        ctx.fillRect(cx - u * 0.9, by - u * 2.2, u * 1.8, u * 1.6);
+        ctx.fillStyle = `rgba(240,177,33,${(glow * 0.9).toFixed(2)})`;
+        ctx.fillRect(cx - u * 0.5, by - u * 1.9, u * 1.0, u * 1.0);
+        // 塔尖
+        ctx.fillStyle = '#6a6a6c';
+        ctx.fillRect(cx - u * 0.2, by - hgt - u * 1.2, Math.max(1, u * 0.4), u * 1.2);
+      } else {
+        // ---- 兽人：万骨塔（白骨堆成的塔）----
+        const wdt = u * 6;
+        const hgt = u * 7;
+        ctx.fillStyle = 'rgba(0,0,0,0.32)';
+        ctx.beginPath();
+        ctx.ellipse(cx, by, u * 3.8, u * 1.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#d8d2c0';
+        ctx.beginPath();
+        ctx.moveTo(cx - wdt / 2, by);
+        ctx.lineTo(cx + wdt / 2, by);
+        ctx.lineTo(cx + u * 0.9, by - hgt);
+        ctx.lineTo(cx - u * 0.9, by - hgt);
+        ctx.closePath();
+        ctx.fill();
+        // 骨节横纹
+        ctx.fillStyle = '#a89e88';
+        for (let i = 1; i < 6; i++) {
+          ctx.fillRect(cx - wdt / 2 + u * i * 0.32, by - u * i * 1.1, wdt - i * u * 0.64, Math.max(1, u * 0.35));
+        }
+        // 顶上的兽颅
+        ctx.fillStyle = '#efe7d2';
+        ctx.fillRect(cx - u * 1.1, by - hgt - u * 1.4, u * 2.2, u * 1.4);
+        ctx.fillStyle = '#2a1a12';
+        ctx.fillRect(cx - u * 0.7, by - hgt - u * 1.0, Math.max(1, u * 0.4), Math.max(1, u * 0.4));
+        ctx.fillRect(cx + u * 0.3, by - hgt - u * 1.0, Math.max(1, u * 0.4), Math.max(1, u * 0.4));
+        // 顶上的红布
+        ctx.fillStyle = '#d9483a';
+        ctx.fillRect(cx + u * 1.0, by - hgt - u * 1.6, Math.max(1, u * 0.4), u * 1.8);
+      }
+
+      ctx.restore();
+    }
+  }
 
   // ==================== 巨兽 ====================
 

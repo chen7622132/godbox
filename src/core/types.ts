@@ -310,6 +310,29 @@ export interface Beast {
   slainBy: number;
 }
 
+/**
+ * 世界奇观。全球唯一，先建成者得 —— 这是《文明6》制造史诗的核心：
+ * 它把「发展」变成一场可见的竞赛，而且建造中的城邦极脆弱（「奇观误国」）。
+ */
+export interface Wonder {
+  /** 0 人类 / 1 精灵 / 2 矮人 / 3 兽人 */
+  kind: number;
+  name: string;
+  /** 建造国（-1 = 未开工） */
+  nation: number;
+  /** 所在城 */
+  city: number;
+  /** 0..1 */
+  progress: number;
+  built: boolean;
+  /** 开工年份 */
+  started: number;
+  /** 完工年份 */
+  finished: number;
+  /** 是否半途而废（城破 / 国亡） */
+  ruined: boolean;
+}
+
 export interface World {
   w: number;
   h: number;
@@ -330,6 +353,7 @@ export interface World {
   nations: Nation[];
   agents: Agent[];
   beasts: Beast[];
+  wonders: Wonder[];
   events: ChronicleEvent[];
   stats: Stats;
   // ---- 流程 ----
