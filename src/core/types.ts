@@ -157,6 +157,8 @@ export interface Settlement {
   miseryTicks: number;
   /** 房屋破损度 0..1（发脾气砸出来的） */
   damage: number;
+  /** 建筑占位（渲染时算一次并写回，供单位避让用） */
+  spots?: Footprint[];
 }
 
 // ============ 国家 ============
@@ -365,6 +367,13 @@ export interface Wonder {
 export type Job = 'farmer' | 'wood' | 'mine' | 'soldier' | 'priest' | 'child';
 
 /** 一个真实存在于地图上的个体 */
+/** 一栋建筑在地图上的占位（世界坐标，r 为占地半径） */
+export interface Footprint {
+  x: number;
+  y: number;
+  r: number;
+}
+
 export interface Unit {
   id: number;
   race: number;

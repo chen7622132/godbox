@@ -99,10 +99,10 @@ await moodShot(2, 'angry', 'tantrum', 'mood-angry');
   const { formArmy, updateArmies } = await import('../src/sim/units.ts');
   const sorted = live.sort((a, b) => b.pop - a.pop);
   const A = sorted[0], B = sorted[1];
-  const m = launchMarch(world, A.id, B.id, A.nation >= 0 ? A.nation : 0, A.race);
+  const m = formArmy(world, A.id, B.id, A.nation >= 0 ? A.nation : 0, A.race);
   if (m) {
-    world.marches.push(m);
-    for (let i = 0; i < 26; i++) { world.tick++; advanceMarch(world, m); }
+    world.armies.push(m);
+    for (let i = 0; i < 30; i++) { world.tick++; updateArmies(world); }
     const { loadImage } = await import('@napi-rs/canvas');
     const us = m.units.map((uid) => world.units.find((u) => u.id === uid)).filter(Boolean);
     const mx = us.length ? us.reduce((acc, u) => acc + u.x, 0) / us.length : A.x;

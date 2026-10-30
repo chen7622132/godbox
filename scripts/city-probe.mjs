@@ -22,13 +22,24 @@ const H = 800;
 const display = createCanvas(W, H);
 const world = generateWorld({ size: 'medium', seed: Number(process.env.SEED ?? 20261030), landRatio: 0.45, fragmentation: 0.35 });
 seedRaces(world, [0, 1, 2, 3]);
-for (let i = 0; i < Number(process.env.TICKS ?? 2200); i++) {
-  stepWorld(world);
-  if (world.tick % 3 === 0) updateFire(world);
-  if (world.tick % 12 === 0) updatePlague(world);
-}
-
 const r = new Renderer(display, world);
+
+// 分轮跑：每轮结束后渲染一帧 —— 渲染会把建筑占位写回世界，
+// 后面的模拟才知道哪里有墙（否则单位避让等于没开）。
+const TICKS = Number(process.env.TICKS ?? 2200);
+for (let round = 0; round < 10; round++) {
+  for (let i = 0; i < TICKS / 10; i++) {
+    stepWorld(world);
+    if (world.tick % 3 === 0) updateFire(world);
+    if (world.tick % 12 === 0) updatePlague(world);
+  }
+  r.cam.zoom = 16;
+  r.cam.x = world.w / 2;
+  r.cam.y = world.h / 2;
+  r.markDirty();
+  r.camDirty = true;
+  r.render(world);
+}
 
 async function shot(name, cx, cy, zoom, cw, chh, zf) {
   r.cam.zoom = zoom;

@@ -83,6 +83,51 @@ export function clearCityUnits(world: World, sid: number): void {
   world.units = world.units.filter((u) => u.home !== sid);
 }
 
+/**
+ * 建筑占位检测。
+ * 之前的小人可以直接穿过墙体、站在屋顶上 —— 因为「城」只是一堆画出来的像素，
+ * 模拟层根本不知道哪里有墙。现在渲染层会把自己算出来的建筑位置写回 Settlement.spots，
+ * 单位移动时据此让路，人和房子才不会互相穿过去。
+ */
+function blockedAt(world: World, x: number, y: number): boolean {
+  for (const s of world.settlements) {
+    if (!s.alive || s.ruin) continue;
+    if (!s.spots || !s.spots.length) continue;
+    if (x < s.x - 5.5 || x > s.x + 5.5 || y < s.y - 5.5 || y > s.y + 5.5) continue;
+    for (const f of s.spots) {
+      const dx = x - f.x;
+      const dy = y - f.y;
+      // 椭圆而不是圆：屋顶是往上画的，视觉上「站在屋顶上」的其实是站在房子上方那一格。
+      // 所以竖直方向的禁行范围要比横向大得多。
+      // 选落脚点时用「大禁区」：连屋顶上方那片视觉区域也避开，
+      // 否则人会停在屋顶正上方，看起来像站在屋顶上。
+      const ex = dx / (f.r + 0.1);
+      const ey = (dy + 0.42) / (f.r * 1.65);
+      if (ex * ex + ey * ey < 1) return true;
+    }
+  }
+  return false;
+}
+
+/** 如果正踩在墙上，就沿最近的空位推出去（不是瞬移，是「侧身让开」） */
+function pushOutOfWalls(world: World, u: Unit): void {
+  for (const s of world.settlements) {
+    if (!s.alive || s.ruin || !s.spots?.length) continue;
+    if (Math.abs(u.x - s.x) > 5.5 || Math.abs(u.y - s.y) > 5.5) continue;
+    for (const f of s.spots) {
+      const dx = u.x - f.x;
+      const dy = u.y - f.y;
+      const ex = dx / (f.r + 0.04);
+      const ey = dy / (f.r + 0.04);
+      if (ex * ex + ey * ey >= 1) continue;
+      const k = 1 / Math.sqrt(Math.max(ex * ex + ey * ey, 0.0001));
+      u.x = f.x + dx * k;
+      u.y = f.y + dy * k;
+      return;
+    }
+  }
+}
+
 /** 该城在城外的工作点（务农/伐木/采矿会往外跑） */
 function workSpot(world: World, u: Unit, rng: Rng): { x: number; y: number } {
   const s = world.settlements[u.home];
@@ -150,11 +195,22 @@ export function updateUnits(world: World): void {
           u.state = 'walk';
           u.timer = 40 + rng.int(60);
         } else if (s) {
-          // 在城里转悠
-          const a = rng.next() * Math.PI * 2;
-          const r = 0.8 + rng.next() * 2.4;
-          u.tx = s.x + 0.5 + Math.cos(a) * r;
-          u.ty = s.y + 0.5 + Math.sin(a) * r * 0.8;
+          // 在城里转悠：挑一个不踩着房子的落脚点
+          let tx = s.x + 0.5;
+          let ty = s.y + 0.5;
+          for (let t = 0; t < 6; t++) {
+            const a = rng.next() * Math.PI * 2;
+            const r = 0.9 + rng.next() * 2.6;
+            const cx = s.x + 0.5 + Math.cos(a) * r;
+            const cy = s.y + 0.5 + Math.sin(a) * r * 0.8;
+            if (!blockedAt(world, cx, cy)) {
+              tx = cx;
+              ty = cy;
+              break;
+            }
+          }
+          u.tx = tx;
+          u.ty = ty;
           u.state = 'walk';
           u.timer = 20 + rng.int(40);
         } else {
@@ -162,6 +218,9 @@ export function updateUnits(world: World): void {
         }
       }
     }
+
+    // 站在墙里就侧身让开（战斗中的士兵例外：他们要往前冲）
+    if (world.settlements.length) pushOutOfWalls(world, u);
 
     // 移动
     if (u.state === 'walk') {

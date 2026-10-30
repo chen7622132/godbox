@@ -107,6 +107,17 @@ export class Renderer {
   cam: Camera = { x: 0, y: 0, zoom: 4 };
   /** 每帧复用的绘制排序表，避免反复分配数组 */
   private _unitList: World['units'] = [];
+  /**
+   * 建筑绘制队列。
+   *
+   * 为什么要延迟：一栋房子和一个人的前后关系，取决于谁离镜头更近（世界 y 更大）。
+   * 原来的画法是「先把整座城画完，再把所有人画上去」——于是人永远浮在屋顶上，
+   * 这就是用户说的「穿模 / 机械叠加」。现在建筑和单位进同一个队列，按脚底 y 排序后
+   * 交替绘制，人走到房子后面就会被挡住，走到前面就会盖住墙。
+   */
+  private _pending: { wy: number; draw: () => void }[] = [];
+  /** 上一次构建绘制队列时的「视角指纹」，一致就整套复用，不必每帧重建 */
+  private _pendingSig = '';
   hover: { x: number; y: number } | null = null;
   hoverRadius = 2;
   selected: number | null = null;
@@ -280,7 +291,7 @@ export class Renderer {
     const ab = this.armyBounds(world);
     this.drawCorpses(world);
     this.drawArmyGround(ab);
-    this.drawUnits(world);
+    this.drawSortedWorld(world);
     this.drawArrows(world);
     this.drawArmyFlags(ab, world);
     this.drawSparks(world);
@@ -590,6 +601,67 @@ export class Renderer {
    * 画每一个市民。真正的绘制在 paintUnit 里（图鉴脚本也用同一份代码，
    * 以保证「验证过的样子」和「游戏里的样子」是同一件事）。
    */
+  /** 把单位按 y 排好（供和建筑归并绘制） */
+  private sortUnits(world: World): World['units'] {
+    const list = this._unitList;
+    list.length = 0;
+    for (const u of world.units) list.push(u);
+    list.sort((a, b) => a.y - b.y);
+    return list;
+  }
+
+  /** 画一个单位（抽出来，供归并绘制逐个调用） */
+  private paintOneUnit(world: World, u: World['units'][number], now: number): void {
+    const z = this.cam.zoom;
+    if (z < 6) return;
+    const { ctx } = this;
+    {
+      const [sx, sy] = this.worldToScreen(u.x, u.y);
+      if (sx < -24 || sy < -24 || sx > this.cssW + 24 || sy > this.cssH + 24) return;
+      const look = RACE_LOOK[u.race] ?? RACE_LOOK[0];
+      const kid = u.job === 'child';
+      const extra = u.role === 'general' ? 0.43 : u.role === 'archer' ? 0.37 : 0.4;
+      const rawH = z * (kid ? 0.2 : extra) * look.h;
+      const H = rawH >= 27 ? 30 : rawH >= 23 ? 26 : rawH >= 19 ? 22 : rawH >= 15 ? 18 : Math.max(6, Math.round(rawH));
+      const W = Math.max(3, Math.round(H * 0.56 * look.w));
+      const flag = world.nations[u.nation]?.color ?? '#c8492f';
+      paintUnit(ctx, sx, sy, H, W, u, look, now, flag);
+      if (u.flash !== undefined && u.flash > world.tick) {
+        ctx.fillStyle = 'rgba(255,255,255,0.78)';
+        ctx.fillRect(Math.round(sx - W / 2) - 1, Math.round(sy - H / 2), W + 2, H);
+      }
+    }
+  }
+
+  /**
+   * 建筑 + 人，按 y 归并绘制。
+   * 这是整张图「有前后层次」的唯一来源：谁脚底更靠下（离镜头近），谁后画、谁盖住别人。
+   */
+  private drawSortedWorld(world: World): void {
+    const z = this.cam.zoom;
+    if (z < 3) {
+      this.drawUnitsAll(world);
+      return;
+    }
+    const now = Date.now();
+    const list = this.sortUnits(world);
+    const pend = this._pending;
+    pend.sort((a, b) => a.wy - b.wy);
+
+    let ui = 0;
+    for (const p of pend) {
+      while (ui < list.length && list[ui].y < p.wy) this.paintOneUnit(world, list[ui++], now);
+      p.draw();
+    }
+    while (ui < list.length) this.paintOneUnit(world, list[ui++], now);
+  }
+
+  /** 低倍视野下不排序，一把画完（省得每帧排 600 个） */
+  private drawUnitsAll(world: World): void {
+    const now = Date.now();
+    for (const u of world.units) this.paintOneUnit(world, u, now);
+  }
+
   private drawUnits(world: World): void {
     const z = this.cam.zoom;
     if (z < 6 || !world.units?.length) return;
@@ -1155,6 +1227,13 @@ export class Renderer {
   private drawSettlements(world: World): void {
     const { ctx } = this;
     const z = this.cam.zoom;
+    // 视角没变就复用上一帧的建筑队列：几百个闭包每帧重建，白扔 4~6ms
+    const sig = `${z}|${Math.round(this.cam.x * 4)}|${Math.round(this.cam.y * 4)}`;
+    const rebuild = sig !== this._pendingSig;
+    if (rebuild) {
+      this._pendingSig = sig;
+      this._pending.length = 0;
+    }
 
     for (const s of world.settlements) {
       if (!s.alive || s.ruin) continue;
@@ -1356,52 +1435,72 @@ export class Renderer {
       }
 
       const placed: { x: number; y: number; w: number; h: number }[] = [];
+      // 第一帧顺手把每栋房子换算成世界坐标写回模拟层 ——
+      // 单位要靠这份清单才知道「这几格是墙，不能站」。
+      const collect = !s.spots || s.spots.length === 0;
+      if (collect) s.spots = [];
       for (const sp of spots) {
         const bx = sp.x;
         const by = sp.y;
         const jit = sp.j;
+        // 脚底 y：建筑中心的下沿，和人的 u.y 同一坐标系，才能一起排序
+        const wy = s.y + (by - sy) / z + 0.62;
+        if (collect) {
+          s.spots!.push({
+            x: s.x + (bx - sx) / z,
+            y: s.y + (by - sy) / z,
+            r: (sp.kind === 'tower' ? 0.34 : sp.kind === 'temple' ? 0.55 : 0.46) * jit,
+          });
+        }
         // 每栋房子的屋顶深浅略不同，避免整片一样
         const rv = 0.9 + h2(seed + 77, Math.round(bx * 13 + by * 7)) * 0.24;
         const rf = shade(race.rgb.map((c) => c * rv) as [number, number, number], 0.98);
         const rfd = shade(race.rgb.map((c) => c * rv) as [number, number, number], 0.6);
 
         if (sp.kind === 'house') {
-          this.drawHouse(bx, by, unit * 0.95 * jit, unit * 0.92 * jit, rf, rfd, jit > 1, true, s.race);
+          if (rebuild) this._pending.push({ wy, draw: () => this.drawHouse(bx, by, unit * 0.95 * jit, unit * 0.92 * jit, rf, rfd, jit > 1, true, s.race) });
           placed.push({ x: bx, y: by, w: unit * 0.95 * jit, h: unit * 0.92 * jit });
         } else if (sp.kind === 'workshop') {
-          this.drawStruct(bx, by, unit * 1.05, unit * 0.95, {
+          if (rebuild) this._pending.push({ wy, draw: () => this.drawStruct(bx, by, unit * 1.05, unit * 0.95, {
             race: s.race, wall: wallDim, roof: rf, roofDark: rfd,
             roofType: s.race === 2 ? 'flat' : 'gable',
             addons: ['belfry', 'goods'], lit: true,
-          });
+          }) });;
           placed.push({ x: bx, y: by, w: unit * 1.05, h: unit * 0.95 });
         } else if (sp.kind === 'granary') {
-          this.drawStruct(bx, by, unit * 0.92, unit * 1.05, {
+          if (rebuild) this._pending.push({ wy, draw: () => this.drawStruct(bx, by, unit * 0.92, unit * 1.05, {
             race: s.race, wall: wallLit, roof: shade([214, 178, 92], 1), roofDark: shade([170, 138, 66], 1),
             roofType: 'dome', addons: ['goods'], lit: false,
-          });
+          }) });;
           placed.push({ x: bx, y: by, w: unit * 0.92, h: unit * 1.05 });
         } else if (sp.kind === 'temple') {
-          this.drawStruct(bx, by, unit * 1.1, unit * 1.3, {
+          if (rebuild) this._pending.push({ wy, draw: () => this.drawStruct(bx, by, unit * 1.1, unit * 1.3, {
             race: s.race, wall: wallLit, roof: '#e8e2cc', roofDark: '#b8b09a',
             roofType: s.race === 2 ? 'flat' : 'spire',
             addons: [s.race === 3 ? 'horns' : 'cross'], lit: true,
-          });
+          }) });;
           placed.push({ x: bx, y: by, w: unit * 1.1, h: unit * 1.3 });
         } else if (sp.kind === 'barracks') {
-          this.drawStruct(bx, by, unit * 1.15, unit * 1.0, {
+          if (rebuild) this._pending.push({ wy, draw: () => this.drawStruct(bx, by, unit * 1.15, unit * 1.0, {
             race: s.race, wall: wallDim, roof: rfd, roofDark: shade(race.rgb, 0.42),
             roofType: s.race === 2 ? 'flat' : 'gable',
             addons: ['banner', 'shield', 'crenel'], lit: true,
-          });
+          }) });;
           placed.push({ x: bx, y: by, w: unit * 1.15, h: unit * 1.0 });
         } else {
-          this.drawStruct(bx, by, unit * 0.7, unit * 1.55, {
+          if (rebuild) this._pending.push({ wy, draw: () => this.drawStruct(bx, by, unit * 0.7, unit * 1.55, {
             race: s.race, wall: wallLit, roof: roof, roofDark,
             roofType: 'flat', addons: ['banner'], lit: true,
-          });
+          }) });;
           placed.push({ x: bx, y: by, w: unit * 0.7, h: unit * 1.55 });
         }
+      }
+
+      // 低倍视野不排序：建筑直接铺完再画人（老路径，快 12ms/帧）。
+      // 只有拉近到能看清屋顶高度差时，才值得为「前后遮挡」付这份开销。
+      if (this.cam.zoom < 24) {
+        for (const p of this._pending) p.draw();
+        this._pending.length = 0;
       }
 
       const houseCount = placed.length;
@@ -1884,6 +1983,37 @@ export function paintStruct(
       ctx.beginPath(); ctx.ellipse(bx - cr * 0.32, cy - cr * 0.4, cr * 0.36, cr * 0.3, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = 'rgba(255,226,140,0.95)';
       ctx.fillRect(Math.round(bx) - 1, cy, 2, 2);
+
+      // —— 以下是把「一个球」变成「一栋树屋」的几笔 ——
+      // 门洞边框：深色洞 + 一圈木头
+      const dw2 = Math.max(2, Math.round(bw * 0.2));
+      const dh2 = Math.max(2, wallH * 0.45);
+      const dx2 = x0 + Math.round(bw * 0.4);
+      const dy2 = eave + Math.round(wallH * 0.55);
+      ctx.fillStyle = '#7a5a34';
+      ctx.fillRect(dx2 - 1, dy2 - 1, dw2 + 2, dh2 + 1);
+      ctx.fillStyle = 'rgba(24,14,8,0.92)';
+      ctx.fillRect(dx2, dy2, dw2, dh2);
+      // 木梯：三级错位踏板，从地面通到平台
+      ctx.fillStyle = '#b98f52';
+      for (let i = 0; i < 3; i++) {
+        ctx.fillRect(dx2 - 2 + i, eave + Math.round(wallH * (0.95 - i * 0.16)), Math.max(2, Math.round(bw * 0.16)), 1);
+      }
+      // 树枝：左右各伸出一截，让树不像悬空的球
+      ctx.fillStyle = '#5c4226';
+      ctx.fillRect(x0 - Math.max(2, Math.round(bw * 0.14)), plankY + 1, Math.max(2, Math.round(bw * 0.16)), 1);
+      ctx.fillRect(x0 + bw - Math.round(bw * 0.02), plankY + 2, Math.max(2, Math.round(bw * 0.14)), 1);
+      // 冠内的叶簇暗部：三个深绿色斑，树冠才有体积
+      ctx.fillStyle = 'rgba(18,52,20,0.55)';
+      ctx.beginPath(); ctx.ellipse(bx + cr * 0.34, cy + cr * 0.3, cr * 0.34, cr * 0.26, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(bx - cr * 0.5, cy + cr * 0.1, cr * 0.22, cr * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+      // 挂在平台边的小灯
+      if (bw >= 10) {
+        ctx.fillStyle = '#ffe27a';
+        ctx.fillRect(x0 + 1, plankY - 2, 1, 1);
+        ctx.fillStyle = 'rgba(255,240,180,0.35)';
+        ctx.fillRect(x0, plankY - 3, 3, 3);
+      }
       return;
     }
 
@@ -1893,25 +2023,75 @@ export function paintStruct(
     // 右墙背光
     ctx.fillStyle = 'rgba(0,0,0,0.24)';
     ctx.fillRect(x0 + Math.round(bw * 0.64), eave, Math.round(bw * 0.36), wallH);
+    // 左上受光边：所有建筑共用同一个光源方向，
+    // 这是「一个世界」和「一堆贴图拼起来」的分界线
+    ctx.fillStyle = 'rgba(255,250,232,0.55)';
+    ctx.fillRect(x0, eave, 1, wallH);
+    ctx.fillRect(x0, y0 + 1, Math.max(1, Math.round(bw * 0.45)), 1);
     // 材质纹理
     if (o.race === 2) {
-      // 矮人：石缝
-      ctx.fillStyle = 'rgba(40,40,40,0.26)';
-      for (let r = 1; r < 3; r++) ctx.fillRect(x0, eave + Math.round((wallH * r) / 3), bw, 1);
+      // 矮人：石缝（错缝砌法，横缝 1px + 每层竖缝错开）
+      ctx.fillStyle = 'rgba(44,42,40,0.34)';
+      const rows = Math.max(2, Math.round(wallH / 4));
+      for (let r = 1; r < rows; r++) {
+        const ry = eave + Math.round((wallH * r) / rows);
+        ctx.fillRect(x0, ry, bw, 1);
+        // 竖缝：每层错半块
+        const off = (r % 2) * 0.5;
+        ctx.fillRect(x0 + Math.round(bw * (0.3 + off)), ry - 3, 1, 3);
+        if (bw > 12) ctx.fillRect(x0 + Math.round(bw * (0.7 - off)), ry - 3, 1, 3);
+      }
     } else if (o.race === 0) {
-      // 人类：木架
-      ctx.fillStyle = 'rgba(122,84,52,0.5)';
-      ctx.fillRect(x0, eave, bw, 1);
-      ctx.fillRect(x0, eave, 1, wallH);
-      ctx.fillRect(x0 + bw - 1, eave, 1, wallH);
+      // 人类：半木结构（白墙 + 木骨架），梁要 1px 但要有横有竖有斜撑
+      ctx.fillStyle = 'rgba(96,62,34,0.82)';
+      ctx.fillRect(x0, eave, bw, 2);                 // 上梁
+      ctx.fillRect(x0, y0 + bh - 2, bw, 2);          // 勒脚
+      ctx.fillRect(x0, eave, 1, wallH);              // 左柱
+      ctx.fillRect(x0 + bw - 1, eave, 1, wallH);     // 右柱
+      if (bw >= 9) {
+        ctx.fillRect(x0 + Math.round(bw * 0.5), eave, 1, wallH); // 中柱
+        ctx.fillRect(x0 + Math.round(bw * 0.5), eave, 1, 2);
+        // 斜撑：两段错位模拟 45°
+        const qy = eave + Math.round(wallH * 0.34);
+        ctx.fillRect(x0 + 2, qy, 2, 1);
+        ctx.fillRect(x0 + 4, qy - 1, 2, 1);
+        ctx.fillRect(x0 + bw - 4, qy, 2, 1);
+        ctx.fillRect(x0 + bw - 6, qy - 1, 2, 1);
+      }
     } else if (o.race === 3) {
-      // 兽人：兽皮竖缝
-      ctx.fillStyle = 'rgba(30,20,12,0.3)';
-      for (let r = 1; r < 3; r++) ctx.fillRect(x0 + Math.round((bw * r) / 3), eave, 1, wallH);
+      // 兽人：兽皮竖缝（2px 一条，缝间留亮筋）
+      ctx.fillStyle = 'rgba(34,22,14,0.4)';
+      const cols = Math.max(2, Math.round(bw / 5));
+      for (let r = 1; r < cols; r++) ctx.fillRect(x0 + Math.round((bw * r) / cols), eave, 1, wallH);
+      ctx.fillStyle = 'rgba(255,240,210,0.18)';
+      for (let r = 1; r < cols; r++) ctx.fillRect(x0 + Math.round((bw * r) / cols) + 1, eave, 1, wallH);
     }
     // 门
     ctx.fillStyle = 'rgba(38,28,18,0.86)';
     ctx.fillRect(x0 + Math.round(bw * 0.42), eave + Math.round(wallH * 0.36), Math.max(2, Math.round(bw * 0.2)), Math.max(2, wallH * 0.64));
+    // 门框：两侧各 1px 亮边 + 头顶一道过梁，门才像「嵌在墙里」而不是贴了块黑
+    if (bw >= 8) {
+      const dx0 = x0 + Math.round(bw * 0.42);
+      const dy0 = eave + Math.round(wallH * 0.36);
+      const dw0 = Math.max(2, Math.round(bw * 0.2));
+      const dh0 = Math.max(2, wallH * 0.64);
+      ctx.fillStyle = 'rgba(236,228,208,0.45)';
+      ctx.fillRect(dx0 - 1, dy0, 1, dh0);
+      ctx.fillRect(dx0, dy0 - 1, dw0, 1);
+      ctx.fillStyle = 'rgba(255,232,170,0.5)';
+      ctx.fillRect(dx0 + Math.round(dw0 * 0.5), dy0 + Math.round(dh0 * 0.55), 1, 1); // 门环
+    }
+
+    // 门前石阶：两级。人走到门口时脚下有落点，人屋关系才不会「浮」
+    if (bw >= 8) {
+      const sx0 = x0 + Math.round(bw * 0.38);
+      const sw0 = Math.max(3, Math.round(bw * 0.3));
+      ctx.fillStyle = 'rgba(202,196,182,0.9)';
+      ctx.fillRect(sx0, y0 + bh, sw0, 1);
+      ctx.fillStyle = 'rgba(130,124,112,0.85)';
+      ctx.fillRect(sx0 - 1, y0 + bh + 1, sw0 + 2, 1);
+    }
+
     // 窗（亮灯）
     if (bw >= 9) {
       const wx = x0 + Math.round(bw * 0.13);
@@ -1921,6 +2101,16 @@ export function paintStruct(
       ctx.fillStyle = o.lit ? 'rgba(255,214,120,0.92)' : 'rgba(52,42,28,0.72)';
       ctx.fillRect(wx, wy, ww, wh);
       ctx.fillRect(x0 + Math.round(bw * 0.72), wy, ww, wh);
+      // 窗框 + 窗台：不加这两笔，窗户就是墙上两块亮斑
+      ctx.fillStyle = 'rgba(46,36,24,0.7)';
+      ctx.fillRect(wx - 1, wy - 1, ww + 2, 1);
+      ctx.fillRect(wx - 1, wy, 1, wh);
+      ctx.fillRect(wx + ww, wy, 1, wh);
+      ctx.fillRect(x0 + Math.round(bw * 0.72) - 1, wy - 1, ww + 2, 1);
+      ctx.fillRect(x0 + Math.round(bw * 0.72) - 1, wy, 1, wh);
+      ctx.fillStyle = 'rgba(230,222,202,0.4)';
+      ctx.fillRect(wx - 1, wy + wh, ww + 2, 1);
+      ctx.fillRect(x0 + Math.round(bw * 0.72) - 1, wy + wh, ww + 2, 1);
     }
 
     // ---------- 屋顶 ----------
@@ -1979,6 +2169,19 @@ export function paintStruct(
       ctx.closePath();
       ctx.fill();
     }
+    // 屋脊高光 + 缺瓦：屋顶是一片纯色最容易「假」，加两笔就有质感
+    if (o.roofType === 'gable' || o.roofType === 'flat') {
+      ctx.fillStyle = 'rgba(255,246,224,0.4)';
+      ctx.fillRect(x0 + Math.round(bw * 0.18), y0 + Math.round(bh * 0.05), Math.round(bw * 0.64), 1);
+      const sd2 = Math.round(bx * 11 + by * 7);
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      for (let i = 0; i < 2; i++) {
+        const px2 = x0 + 2 + ((sd2 + i * 37) % Math.max(1, bw - 4));
+        const py2 = y0 + 2 + ((sd2 + i * 53) % Math.max(1, Math.round(bh * 0.4)));
+        ctx.fillRect(px2, py2, 1 + (i % 2), 1);
+      }
+    }
+
     // 屋檐暗线
     if (o.roofType !== 'dome' && o.roofType !== 'spire') {
       ctx.fillStyle = 'rgba(14,10,6,0.5)';
