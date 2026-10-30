@@ -103,7 +103,7 @@ export class Chronicle {
     if (e.cause) {
       const c = document.createElement('div');
       c.className = 'ev-cause';
-      c.textContent = `因：${e.cause}`;
+      c.textContent = e.cause;
       li.appendChild(c);
     }
 
@@ -123,7 +123,7 @@ export class Chronicle {
 
     // 卷首：事件是倒序插入的，所以卷头要落在「该卷最新那条」的上方
     const era = e.era ?? 0;
-    if (this.lastEra !== null && era !== this.lastEra) {
+    if (this.lastEra === null || era !== this.lastEra) {
       const vol = document.createElement('li');
       vol.className = 'vol';
       vol.textContent = `第 ${cnNum(era + 1)} 卷`;

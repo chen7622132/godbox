@@ -9,6 +9,8 @@ export interface LogOpts {
   actor?: string;
   cause?: string;
   quote?: string;
+  /** 手动指定卷号（史评要落在它总结的那一卷里，而不是下一卷开头） */
+  era?: number;
 }
 
 export function logEvent(
@@ -25,7 +27,7 @@ export function logEvent(
     text,
     race,
     level,
-    era: Math.floor(world.tick / 2200),
+    era: opts?.era ?? Math.floor(world.tick / 2200),
   };
   if (opts?.actor) ev.actor = opts.actor;
   if (opts?.cause) ev.cause = opts.cause;

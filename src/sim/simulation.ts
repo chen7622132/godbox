@@ -216,7 +216,7 @@ export function stepWorld(world: World): void {
     // 卷末：先写史评，再开新卷
     const eraNo = Math.floor(world.tick / 2200);
     const count = world.events.filter((e) => e.level >= 1 && (e.era ?? 0) === eraNo - 1).length;
-    logEvent(world, 'legend', narrator.eraComment(count), -1, 2);
+    logEvent(world, 'legend', narrator.eraComment(count), -1, 2, { era: eraNo - 1 });
     triggerEraEvent(world);
   }
   if (world.tick % 30 === 0) updateStats(world);
