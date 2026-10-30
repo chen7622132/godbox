@@ -192,6 +192,7 @@ export function generateWorld(opt: WorldGenOptions): World {
     settlements: [],
     nations: [],
     agents: [],
+    beasts: [],
     events: [],
     stats: {
       warsDeclared: 0,

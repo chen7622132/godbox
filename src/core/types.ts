@@ -279,6 +279,35 @@ export interface Stats {
 }
 
 // ============ 世界 ============
+/**
+ * 远古巨兽。矮人要塞里最强的叙事引擎：
+ * 一只巨兽能凭一己之力逼文明放弃城镇，也会成就「屠兽英雄」。
+ * 它打破单一文明的滚雪球，又天然产出史诗。
+ */
+export interface Beast {
+  id: number;
+  name: string;
+  /** 0 巨兽（强） / 1 魔兽（中） */
+  tier: number;
+  x: number;
+  y: number;
+  /** 战力：能压倒中等城池，但会被大国的主力击退 */
+  power: number;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+  /** 累计杀了多少人 */
+  kills: number;
+  /** 毁掉了几座城 */
+  razed: number;
+  /** 上次行动 tick */
+  lastAct: number;
+  /** 上次出现的年份（用于「蛰伏十年后重现」） */
+  lastSeen: number;
+  /** 杀了它的人（agent id，-1 无） */
+  slainBy: number;
+}
+
 export interface World {
   w: number;
   h: number;
@@ -298,6 +327,7 @@ export interface World {
   settlements: Settlement[];
   nations: Nation[];
   agents: Agent[];
+  beasts: Beast[];
   events: ChronicleEvent[];
   stats: Stats;
   // ---- 流程 ----

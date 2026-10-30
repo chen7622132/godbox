@@ -41,6 +41,7 @@ export interface SaveBlob {
   settlements: World['settlements'];
   nations: World['nations'];
   agents: World['agents'];
+  beasts: World['beasts'];
   events: World['events'];
   stats: World['stats'];
   ended: boolean;
@@ -69,6 +70,7 @@ export function serialize(world: World): SaveBlob {
     settlements: world.settlements,
     nations: world.nations,
     agents: world.agents,
+    beasts: world.beasts,
     events: world.events.slice(-400),
     stats: world.stats,
     ended: world.ended,
@@ -105,6 +107,7 @@ export function deserialize(blob: unknown): World {
     settlements: b.settlements,
     nations: b.nations,
     agents: b.agents,
+    beasts: b.beasts ?? [],
     events: b.events,
     stats: b.stats,
     ended: b.ended,

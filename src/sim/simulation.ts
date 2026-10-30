@@ -7,6 +7,7 @@ import {
   type Ambition,
 } from '../core/types';
 import { Narrator, grandNum } from '../core/narrative';
+import { updateBeasts, maybeAwakenBeast } from './beasts';
 import { findLandNear } from '../core/world';
 
 const rng = new Rng(1);
@@ -207,6 +208,7 @@ export function stepWorld(world: World): void {
 
   growSettlements(world);
   updateMoods(world);
+  if (world.tick % 30 === 0) updateBeasts(world);
   if (world.tick % 3 === 0) expandTerritories(world);
   if (world.tick % 2 === 0) trySpawnSettlements(world);
   if (world.tick % 5 === 0) updateNations(world);
@@ -218,10 +220,15 @@ export function stepWorld(world: World): void {
     const count = world.events.filter((e) => e.level >= 1 && (e.era ?? 0) === eraNo - 1).length;
     logEvent(world, 'legend', narrator.eraComment(count), -1, 2, { era: eraNo - 1 });
     triggerEraEvent(world);
+
   }
   if (world.tick % 30 === 0) updateStats(world);
 
   world.rngState = rng.s;
+
+  // 必须放在 rngState 写回之后：它自己要推进随机状态，
+  // 放在前面会被这一行覆盖掉，导致每次掷出同一个结果。
+  if (world.tick % 1100 === 0) maybeAwakenBeast(world);
 }
 
 // ============ 聚落成长 ============
@@ -262,6 +269,14 @@ function growSettlements(world: World): void {
 
     // 情绪直接改变生育意愿：快乐的村子长得快，悲伤的村子缩在家里
     if (delta > 0) delta *= moodGrowthMul(s.mood ?? 'normal');
+
+    // 帝国过载：版图越大，治理成本超线性上升（历史动力学：行政半径决定兴衰）
+    // 这是阻止「强者恒强」的第一道闸门
+    const nat = s.nation >= 0 ? world.nations[s.nation] : undefined;
+    if (nat && delta > 0) {
+      const over = Math.max(0, nat.cities.length - 6);
+      if (over > 0) delta *= Math.max(0.3, 1 - over * 0.075);
+    }
 
     // 领土太小（被别国挤死）则饿死
     if (pressure > 1) delta -= s.pop * (pressure - 1) * 0.06;
@@ -1167,8 +1182,19 @@ function updateStats(world: World): void {
     const owned = cities.filter((s) => s.nation === only.id).length;
     if (owned / cities.length >= 0.75) {
       world.ended = true;
+      const king = only.king >= 0 ? world.agents[only.king] : undefined;
+      const who = king ? `${king.name}${king.epithet ? `（${king.epithet}）` : ''}` : only.name;
       world.endReason = `${only.name} 统一了世界`;
-      logEvent(world, 'unify', `${only.name} 统一了已知世界，${only.name}的时代开始了`, only.race, 2);
+      logEvent(
+        world, 'unify',
+        `天下归一。${who} 立于 ${only.name} 都城之上，四野再无旗号相抗。史官至此搁笔，因已无国可记。`,
+        only.race, 2,
+        {
+          actor: king?.name,
+          cause: `${only.name} 历 ${only.warCount} 战，终并天下`,
+          quote: king ? '「我以为这一天来了会很痛快。」' : undefined,
+        },
+      );
     }
   }
   if (cities.length === 0 && world.year > 12) {

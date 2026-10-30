@@ -4,6 +4,7 @@ import { logEvent } from '../core/events';
 import { IS_LAND, T, type World } from '../core/types';
 import { findLandNear } from '../core/world';
 import { createSettlement } from './simulation';
+import { spawnBeasts } from './beasts';
 
 /**
  * 创世播种：给每个种族在偏好地形上放下若干个营地。
@@ -60,4 +61,7 @@ export function seedRaces(
     `纪元元年。${raceIds.map((r) => RACES[r].name).join('、')}的火种落地，历史开始流动`,
     -1, 2,
   );
+
+  // 巨兽比所有文明都古老 —— 开局就放在荒野里
+  spawnBeasts(world, 3);
 }
