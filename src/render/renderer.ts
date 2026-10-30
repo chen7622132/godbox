@@ -557,151 +557,24 @@ export class Renderer {
   // ==================== 单位（真实个体）====================
 
   /**
-   * 画每一个市民。
-   *
-   * WorldBox 的做法值得学：小人只有 8~12 像素高，二头身，不描黑边，
-   * 靠「肤色 + 衣色 + 一件道具」区种族和职业。远看是一片活的蚁群，
-   * 近看每个人都不一样 —— 这才是上帝视角的乐趣所在。
+   * 画每一个市民。真正的绘制在 paintUnit 里（图鉴脚本也用同一份代码，
+   * 以保证「验证过的样子」和「游戏里的样子」是同一件事）。
    */
   private drawUnits(world: World): void {
     const z = this.cam.zoom;
     if (z < 6 || !world.units?.length) return;
     const { ctx } = this;
+    const now = Date.now();
 
     for (const u of world.units) {
       const [sx, sy] = this.worldToScreen(u.x, u.y);
-      if (sx < -20 || sy < -20 || sx > this.cssW + 20 || sy > this.cssH + 20) continue;
-
+      if (sx < -24 || sy < -24 || sx > this.cssW + 24 || sy > this.cssH + 24) continue;
       const look = RACE_LOOK[u.race] ?? RACE_LOOK[0];
       const kid = u.job === 'child';
-      // 小人始终保持在 7~32px：太小看不见，太大盖住房子
-      // 单位约半格高：既能看清头身，又不至于盖住房子
-      // 人约房子的 1/4 高 —— 这个比例决定「城」看起来有多大
-      const H = Math.max(5, Math.min(18, Math.round(z * (kid ? 0.14 : 0.22) * look.h)));
-      const W = Math.max(4, Math.round(H * 0.58 * look.w));
-
-      // 二头身：头占三分之一，这是 WorldBox 好认的关键
-      const headH = Math.max(3, Math.round(H * 0.34));
-      const bodyH = Math.max(3, Math.round(H * 0.4));
-      const legH = Math.max(1, H - headH - bodyH);
-
-      const bx = Math.round(sx - W / 2);
-      const byFoot = Math.round(sy + H / 2);
-      const byHead = byFoot - H; // 头顶
-      const byBody = byHead + headH;
-      const byLeg = byBody + bodyH;
-
-      // 走路时两腿交替
-      const swing = u.state === 'walk' && Math.floor(u.anim / 4) % 2 === 0;
-
-      // 脚下投影
-      ctx.fillStyle = 'rgba(10,14,10,0.34)';
-      ctx.fillRect(bx, byFoot - 1, W, Math.max(1, Math.round(H * 0.09)));
-
-      // 腿
-      ctx.fillStyle = look.cloth2;
-      const legW = Math.max(1, Math.round(W * 0.34));
-      ctx.fillRect(bx, byLeg, legW, legH - (swing ? 1 : 0));
-      ctx.fillRect(bx + W - legW, byLeg, legW, legH - (swing ? 0 : 1));
-
-      // 身体
-      ctx.fillStyle = u.job === 'priest' ? '#e8e4d4' : look.cloth;
-      ctx.fillRect(bx, byBody, W, bodyH);
-      // 身体高光（左侧一道亮边，像光从左上来）
-      ctx.fillStyle = 'rgba(255,255,255,0.16)';
-      ctx.fillRect(bx, byBody, Math.max(1, Math.round(W * 0.28)), bodyH);
-
-      // 手臂：身体两侧各一条，走路时前后摆
-      if (W >= 5) {
-        ctx.fillStyle = look.skin;
-        const armH = Math.max(1, Math.round(bodyH * (swing ? 0.7 : 1)));
-        ctx.fillRect(bx - 1, byBody + (swing ? 1 : 0), 1, armH);
-        ctx.fillRect(bx + W, byBody + (swing ? 0 : 1), 1, armH);
-      }
-
-      // 头
-      const headBack = u.dir === 3; // 背对镜头时看到的是头发
-      const hw = Math.max(2, Math.round(W * 1.02));
-      const hx = Math.round(sx - hw / 2);
-      ctx.fillStyle = headBack ? look.hair : look.skin;
-      ctx.fillRect(hx, byHead, hw, headH);
-      // 头顶发型（种族特征）
-      if (!headBack) {
-        ctx.fillStyle = look.hair;
-        ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.32)));
-      }
-
-      // ---- 职业道具 ----
-      const px = Math.max(1, Math.round(W * 0.34));
-      if (u.job === 'soldier') {
-        // 铁盔 + 矛
-        ctx.fillStyle = '#9aa4b2';
-        ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.5)));
-        ctx.fillStyle = '#e6eef6';
-        ctx.fillRect(bx + W + 1, byHead - 1, Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
-      } else if (u.job === 'wood') {
-        // 斧
-        ctx.fillStyle = '#8a5a2b';
-        ctx.fillRect(bx + W + 1, byBody, Math.max(1, Math.round(W * 0.28)), Math.round(H * 0.5));
-        ctx.fillStyle = '#dfe6ee';
-        ctx.fillRect(bx + W, byBody - Math.round(H * 0.16), Math.max(2, Math.round(W * 0.55)), Math.max(2, Math.round(H * 0.16)));
-      } else if (u.job === 'mine') {
-        // 矿工帽
-        ctx.fillStyle = '#6a6a72';
-        ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.42)));
-        ctx.fillStyle = '#ffd447';
-        ctx.fillRect(hx + Math.round(hw / 2) - 1, byHead, 1, 1);
-      } else if (u.job === 'farmer') {
-        // 草帽
-        ctx.fillStyle = '#d9b45a';
-        ctx.fillRect(hx - 1, byHead, hw + 2, Math.max(1, Math.round(headH * 0.3)));
-      } else if (u.job === 'priest') {
-        // 金色法杖
-        ctx.fillStyle = '#c8a63a';
-        ctx.fillRect(bx + W + 1, byHead - 1, Math.max(1, Math.round(W * 0.28)), Math.round(H * 0.82));
-        ctx.fillStyle = '#ffe27a';
-        ctx.fillRect(bx + W, byHead - 3, Math.max(2, Math.round(W * 0.5)), Math.max(2, Math.round(W * 0.5)));
-      }
-
-      // 兽人獠牙（很小的一个白点，但一眼认出）
-      if (u.race === 3 && !headBack && headH >= 3) {
-        ctx.fillStyle = '#efe7d2';
-        ctx.fillRect(hx, byHead + headH - 1, 1, 1);
-        ctx.fillRect(hx + hw - 1, byHead + headH - 1, 1, 1);
-      }
-      // 精灵尖耳
-      if (u.race === 1 && !headBack && headH >= 3) {
-        ctx.fillStyle = look.skin;
-        ctx.fillRect(hx - 1, byHead + Math.round(headH * 0.4), 1, 1);
-        ctx.fillRect(hx + hw, byHead + Math.round(headH * 0.4), 1, 1);
-      }
-      // 矮人大胡子
-      if (u.race === 2 && headH >= 3) {
-        ctx.fillStyle = look.hair;
-        ctx.fillRect(hx, byHead + headH - 1, hw, 1);
-      }
-
-      // 战斗：挥砍 + 血点
-      if (u.state === 'fight') {
-        const t = Math.floor(Date.now() / 70);
-        const swing2 = t % 2 === 0;
-        // 高抬的武器（2px 宽，远看也能看出在挥）
-        ctx.fillStyle = '#f0f6fc';
-        const ww2 = Math.max(1, Math.round(W * 0.3));
-        if (swing2) {
-          ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.22), ww2, Math.round(H * 0.72));
-          ctx.fillRect(bx + W, byHead - Math.round(H * 0.22), Math.round(W * 0.7), Math.max(1, Math.round(H * 0.12)));
-        } else {
-          ctx.fillRect(bx + W + 2, byBody - 1, Math.round(H * 0.42), ww2);
-        }
-        // 溅血（几粒，够醒目就行）
-        if (t % 2 === 0) {
-          ctx.fillStyle = 'rgba(210,28,18,0.9)';
-          ctx.fillRect(bx + W + 2, byBody + 1, 2, 2);
-          ctx.fillRect(bx - 3, byBody - 2, 2, 2);
-          ctx.fillRect(bx + Math.round(W * 0.5), byHead - 3, 1, 2);
-        }
-      }
+      // 人约房子的 1/3 高：再小就看不见脸，再大就不像城
+      const H = Math.max(5, Math.min(30, Math.round(z * (kid ? 0.24 : 0.42) * look.h)));
+      const W = Math.max(3, Math.round(H * 0.56 * look.w));
+      paintUnit(ctx, sx, sy, H, W, u, look, now);
     }
   }
 
@@ -1876,4 +1749,236 @@ function hexToRgb(hex: string): [number, number, number] {
     parseInt(h.slice(2, 4), 16),
     parseInt(h.slice(4, 6), 16),
   ];
+}
+
+/** 四族外观（图鉴脚本也用它） */
+export const RACE_LOOK_EXPORT = RACE_LOOK;
+
+/**
+ * 画一个单位。所有细节都按身高分级 —— 小人矮的时候自动省略，
+ * 放大到 12px 以上才出现眼睛、腰带、靴子。
+ *
+ * 这个函数被游戏渲染和图鉴脚本共用，避免「测试图好看、游戏里不一样」。
+ */
+export function paintUnit(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  H: number,
+  W: number,
+  u: { race: number; job: string; state: string; dir: number; anim: number },
+  look: { skin: string; cloth: string; cloth2: string; hair: string; w: number; h: number },
+  now: number,
+): void {
+  const L1 = H >= 7;   // 影子、手臂
+  const L2 = H >= 10;  // 眼睛、腰带、靴子
+  const L3 = H >= 16;  // 护鼻、盾纹、斧刃
+
+  const headH = Math.max(2, Math.round(H * 0.34));
+  const bodyH = Math.max(2, Math.round(H * 0.4));
+  const legH = Math.max(1, H - headH - bodyH);
+
+  const bx = Math.round(sx - W / 2);
+  const byFoot = Math.round(sy + H / 2);
+  const byHead = byFoot - H;
+  const byBody = byHead + headH;
+  const byLeg = byBody + bodyH;
+
+  const swing = u.state === 'walk' && Math.floor(u.anim / 4) % 2 === 0;
+
+  // ---- 影子 ----
+  if (L1) {
+    ctx.fillStyle = 'rgba(10,14,10,0.32)';
+    ctx.fillRect(bx, byFoot, W, Math.max(1, Math.round(H * 0.08)));
+  }
+
+  // ---- 腿 + 靴 ----
+  const legW = Math.max(1, Math.round(W * 0.34));
+  ctx.fillStyle = look.cloth2;
+  ctx.fillRect(bx, byLeg, legW, Math.max(1, legH - (swing ? 1 : 0)));
+  ctx.fillRect(bx + W - legW, byLeg, legW, Math.max(1, legH - (swing ? 0 : 1)));
+  if (L2 && legH >= 2) {
+    ctx.fillStyle = '#2a1d12';
+    ctx.fillRect(bx, byFoot - 1 - (swing ? 1 : 0), legW, 1);
+    ctx.fillRect(bx + W - legW, byFoot - 1 - (swing ? 0 : 1), legW, 1);
+  }
+
+  // ---- 身体 ----
+  const robe = u.job === 'priest';
+  ctx.fillStyle = robe ? '#e8e4d4' : look.cloth;
+  ctx.fillRect(bx, byBody, W, bodyH);
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(bx, byBody, Math.max(1, Math.round(W * 0.3)), bodyH);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(bx + W - Math.max(1, Math.round(W * 0.24)), byBody, Math.max(1, Math.round(W * 0.24)), bodyH);
+  if (L2) {
+    ctx.fillStyle = 'rgba(40,28,16,0.66)';
+    ctx.fillRect(bx, byBody + Math.round(bodyH * 0.64), W, 1);
+  }
+  if (robe && L2) {
+    ctx.fillStyle = 'rgba(230,190,80,0.85)';
+    ctx.fillRect(bx + Math.round(W * 0.46), byBody, 1, bodyH);
+  }
+
+  // ---- 手臂 ----
+  if (L1) {
+    ctx.fillStyle = look.skin;
+    const armH = Math.max(1, Math.round(bodyH * (swing ? 0.7 : 1)));
+    ctx.fillRect(bx - 1, byBody + (swing ? 1 : 0), 1, armH);
+    ctx.fillRect(bx + W, byBody + (swing ? 0 : 1), 1, armH);
+  }
+
+  // ---- 头 ----
+  const headBack = u.dir === 3;
+  const hw = Math.max(2, Math.round(W * 1.04));
+  const hx = Math.round(sx - hw / 2);
+  ctx.fillStyle = headBack ? look.hair : look.skin;
+  ctx.fillRect(hx, byHead, hw, headH);
+
+  // 发型
+  if (!headBack) {
+    ctx.fillStyle = look.hair;
+    if (u.race === 2) {
+      // 矮人：秃顶，只留两侧鬓角
+      ctx.fillRect(hx, byHead + Math.max(1, Math.round(headH * 0.35)), 1, headH);
+      ctx.fillRect(hx + hw - 1, byHead + Math.max(1, Math.round(headH * 0.35)), 1, headH);
+    } else if (u.race === 1) {
+      // 精灵：刘海 + 两侧长发
+      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.3)));
+      ctx.fillRect(hx - 1, byHead + 1, 1, Math.max(1, Math.round(headH * 0.95)));
+      ctx.fillRect(hx + hw, byHead + 1, 1, Math.max(1, Math.round(headH * 0.95)));
+    } else if (u.race === 3) {
+      // 兽人：低额短发
+      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.44)));
+    } else {
+      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.34)));
+    }
+  }
+
+  // 眼睛
+  if (L2 && !headBack) {
+    ctx.fillStyle = 'rgba(20,12,8,0.92)';
+    const ey = byHead + Math.round(headH * 0.55);
+    if (hw >= 4) {
+      ctx.fillRect(hx + 1, ey, 1, 1);
+      ctx.fillRect(hx + hw - 2, ey, 1, 1);
+    } else {
+      ctx.fillRect(hx + Math.round(hw / 2), ey, 1, 1);
+    }
+  }
+
+  // 矮人大胡子：要占掉下半张脸并盖到胸口，否则看不出是胡子
+  if (u.race === 2) {
+    ctx.fillStyle = look.hair;
+    const bw2 = Math.max(3, Math.round(hw * 1.15));
+    const bh2 = Math.max(2, Math.round(headH * 0.62));
+    ctx.fillRect(Math.round(sx - bw2 / 2), byHead + Math.round(headH * 0.48), bw2, bh2);
+    // 胡子往胸口延伸一点，形成「一坨」而不是「一条线」
+    ctx.fillRect(Math.round(sx - bw2 / 2) + 1, byBody, Math.max(2, bw2 - 2), Math.max(1, Math.round(bodyH * 0.5)));
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(Math.round(sx - bw2 / 2), byHead + Math.round(headH * 0.48) + bh2 - 1, bw2, 1);
+  }
+  // 兽人獠牙：2x2 的白块，小到 1px 会消失
+  if (u.race === 3 && !headBack && headH >= 3) {
+    ctx.fillStyle = '#f6f0dc';
+    const tw2 = headH >= 5 ? 2 : 1;
+    ctx.fillRect(hx, byHead + headH - tw2, tw2, tw2);
+    ctx.fillRect(hx + hw - tw2, byHead + headH - tw2, tw2, tw2);
+  }
+  // 精灵尖耳：必须是一块明显的凸起，1px 在缩放后会被完全抹平
+  if (u.race === 1 && !headBack && headH >= 3) {
+    ctx.fillStyle = look.skin;
+    const ey2 = byHead + Math.round(headH * 0.32);
+    const eh2 = Math.max(2, Math.round(headH * 0.42));
+    ctx.fillRect(hx - 2, ey2, 2, eh2);
+    ctx.fillRect(hx + hw, ey2, 2, eh2);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(hx - 2, ey2 + eh2, 2, 1);
+    ctx.fillRect(hx + hw, ey2 + eh2, 2, 1);
+  }
+
+  // ---- 职业装备 ----
+  const eqW = Math.max(1, Math.round(W * 0.34));
+  if (u.job === 'soldier') {
+    ctx.fillStyle = '#9aa4b2';
+    ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.58)));
+    ctx.fillStyle = '#c8d2dc';
+    ctx.fillRect(hx, byHead, hw, 1);
+    if (L3) {
+      ctx.fillStyle = '#7d8794';
+      ctx.fillRect(Math.round(sx), byHead, 1, Math.round(headH * 0.55));
+    }
+    // 长矛：矛杆 + 明显矛头
+    ctx.fillStyle = '#8a6a44';
+    ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.16), Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
+    ctx.fillStyle = '#eef4fa';
+    const sh2 = Math.max(2, Math.round(H * 0.22));
+    ctx.fillRect(bx + W, byHead - Math.round(H * 0.16) - sh2, Math.max(2, Math.round(W * 0.62)), sh2);
+    // 盾
+    if (L2) {
+      ctx.fillStyle = look.cloth2;
+      ctx.fillRect(bx - 3, byBody, 2, Math.max(2, Math.round(bodyH * 0.85)));
+      if (L3) {
+        ctx.fillStyle = '#d8dee6';
+        ctx.fillRect(bx - 3, byBody + Math.round(bodyH * 0.3), 1, 1);
+      }
+    }
+  } else if (u.job === 'wood') {
+    ctx.fillStyle = '#8a5a2b';
+    ctx.fillRect(bx + W + 1, byBody, Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.55));
+    ctx.fillStyle = '#e4ebf2';
+    ctx.fillRect(bx + W, byBody - Math.round(H * 0.22), Math.max(3, Math.round(W * 0.8)), Math.max(3, Math.round(H * 0.22)));
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(bx + W, byBody - Math.round(H * 0.22) + Math.max(3, Math.round(H * 0.22)) - 1, Math.max(3, Math.round(W * 0.8)), 1);
+    if (L3) {
+      ctx.fillStyle = '#aab4c0';
+      ctx.fillRect(bx + W, byBody - Math.round(H * 0.2), 1, Math.max(2, Math.round(H * 0.2)));
+    }
+  } else if (u.job === 'mine') {
+    ctx.fillStyle = '#6a6a72';
+    ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.46)));
+    ctx.fillStyle = '#ffe27a';
+    ctx.fillRect(hx + Math.round(hw / 2), byHead, 1, 1);
+    ctx.fillStyle = '#8a5a2b';
+    ctx.fillRect(bx + W + 1, byBody - 1, 1, Math.round(H * 0.5));
+    ctx.fillStyle = '#9aa4b2';
+    ctx.fillRect(bx + W, byBody - 2, Math.max(2, eqW), 1);
+  } else if (u.job === 'farmer') {
+    ctx.fillStyle = '#d9b45a';
+    ctx.fillRect(hx - 1, byHead, hw + 2, Math.max(1, Math.round(headH * 0.34)));
+    ctx.fillStyle = '#c19a3e';
+    ctx.fillRect(hx - 1, byHead + Math.max(1, Math.round(headH * 0.34)) - 1, hw + 2, 1);
+    if (L2) {
+      ctx.fillStyle = '#c8d2dc';
+      ctx.fillRect(bx + W + 1, byBody, 1, Math.round(H * 0.44));
+      ctx.fillRect(bx + W, byBody - 1, 2, 1);
+    }
+  } else if (u.job === 'priest') {
+    ctx.fillStyle = '#c8a63a';
+    ctx.fillRect(bx + W + 1, byHead - 1, Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.88));
+    ctx.fillStyle = '#ffe27a';
+    ctx.fillRect(bx + W, byHead - 3, Math.max(2, Math.round(W * 0.52)), Math.max(2, Math.round(W * 0.52)));
+    if (L2) {
+      ctx.fillStyle = 'rgba(255,226,140,0.6)';
+      ctx.fillRect(hx - 1, byHead - 2, hw + 2, 1);
+    }
+  }
+
+  // ---- 战斗 ----
+  if (u.state === 'fight') {
+    const t = Math.floor(now / 70);
+    const sw = t % 2 === 0;
+    ctx.fillStyle = '#f0f6fc';
+    if (sw) {
+      ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.3), Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
+      ctx.fillRect(bx + W, byHead - Math.round(H * 0.3), Math.round(W * 0.72), Math.max(1, Math.round(H * 0.13)));
+    } else {
+      ctx.fillRect(bx + W + 2, byBody - 1, Math.round(H * 0.44), Math.max(1, Math.round(W * 0.3)));
+    }
+    if (t % 2 === 0) {
+      ctx.fillStyle = 'rgba(210,28,18,0.9)';
+      ctx.fillRect(bx + W + 2, byBody + 1, 2, 2);
+      ctx.fillRect(bx - 3, byBody - 2, 2, 2);
+    }
+  }
 }

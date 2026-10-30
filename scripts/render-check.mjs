@@ -147,19 +147,19 @@ for (let r = 0; r < 4; r++) {
   for (let j = 0; j < 3; j++) {
     demo.push({
       id: 90000 + r * 10 + j, race: r, job: jobs[j], nation: 0, home: spot.id,
-      x: spot.x + 1.0 + j * 1.7, y: spot.y + 2.0 + r * 1.7,
+      x: spot.x + 1.0 + j * 1.1, y: spot.y + 2.0 + r * 1.1,
       tx: 0, ty: 0, state: 'idle', timer: 0, anim: 0, hp: 100, dir: 2,
     });
   }
 }
 world.units = [...world.units, ...demo];
-r.cam.zoom = 40; r.cam.x = spot.x + 2.7; r.cam.y = spot.y + 4.55;
+r.cam.zoom = 64; r.cam.x = spot.x + 2.7; r.cam.y = spot.y + 4.55;
 r.markDirty(); r.camDirty = true; r.render(world);
 {
   const full = await display.encode('png');
   const { loadImage } = await import('@napi-rs/canvas');
   const img = await loadImage(full);
-  const cw = 420, chh = 450;
+  const cw = 460, chh = 480;
   const c2 = createCanvas(cw, chh);
   const cx2 = c2.getContext('2d');
   cx2.imageSmoothingEnabled = false;
