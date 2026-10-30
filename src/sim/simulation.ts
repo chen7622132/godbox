@@ -9,6 +9,7 @@ import {
 import { Narrator, grandNum } from '../core/narrative';
 import { updateBeasts, maybeAwakenBeast } from './beasts';
 import { updateWonders, wonderBuff } from './wonders';
+import { updateUnits, syncUnitsToCities } from './units';
 import { findLandNear } from '../core/world';
 
 const rng = new Rng(1);
@@ -211,6 +212,8 @@ export function stepWorld(world: World): void {
   updateMoods(world);
   if (world.tick % 30 === 0) updateBeasts(world);
   if (world.tick % 40 === 0) updateWonders(world);
+  updateUnits(world);
+  syncUnitsToCities(world);
   if (world.tick % 3 === 0) expandTerritories(world);
   if (world.tick % 2 === 0) trySpawnSettlements(world);
   if (world.tick % 5 === 0) updateNations(world);

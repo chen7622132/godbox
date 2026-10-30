@@ -43,6 +43,7 @@ export interface SaveBlob {
   agents: World['agents'];
   beasts: World['beasts'];
   wonders: World['wonders'];
+  units: World['units'];
   events: World['events'];
   stats: World['stats'];
   ended: boolean;
@@ -73,6 +74,7 @@ export function serialize(world: World): SaveBlob {
     agents: world.agents,
     beasts: world.beasts,
     wonders: world.wonders,
+    units: world.units,
     events: world.events.slice(-400),
     stats: world.stats,
     ended: world.ended,
@@ -111,6 +113,7 @@ export function deserialize(blob: unknown): World {
     agents: b.agents,
     beasts: b.beasts ?? [],
     wonders: b.wonders ?? [],
+    units: b.units ?? [],
     events: b.events,
     stats: b.stats,
     ended: b.ended,

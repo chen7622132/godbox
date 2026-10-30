@@ -40,6 +40,9 @@ const withStatus = live.filter((s) => s.status).length;
 const foodKinds = {};
 for (const s of live) foodKinds[s.foodKind] = (foodKinds[s.foodKind] ?? 0) + 1;
 console.log('情绪分布', JSON.stringify(moodCount), '| 带可见状态', withStatus, '| 主食分布', JSON.stringify(foodKinds));
+console.log('单位数', world.units.length, '| 职业分布', JSON.stringify(
+  world.units.reduce((a, u) => { a[u.job] = (a[u.job] ?? 0) + 1; return a; }, {})
+));
 console.log('最爱食物匹配数', live.filter((s) => s.foodKind === s.favFood).length, '/', live.length);
 
 const display = createCanvas(W, H);
@@ -90,6 +93,59 @@ async function moodShot(idx, mood, status, name) {
 await moodShot(0, 'happy', 'sing', 'mood-happy');
 await moodShot(1, 'sad', 'cry', 'mood-sad');
 await moodShot(2, 'angry', 'tantrum', 'mood-angry');
+
+// 四族城池特写
+const { loadImage } = await import('@napi-rs/canvas');
+const RACE_CN = ['人类', '精灵', '矮人', '兽人'];
+for (let ri = 0; ri < 4; ri++) {
+  const c = live.filter((x) => x.race === ri).sort((a, b) => b.pop - a.pop)[0];
+  if (!c) continue;
+  r.cam.zoom = 20;
+  r.cam.x = c.x + 0.5;
+  r.cam.y = c.y + 0.5;
+  r.markDirty();
+  r.camDirty = true;
+  r.render(world);
+  const full = await display.encode('png');
+  const img = await loadImage(full);
+  const cw = 460, chh = 400;
+  const c2 = createCanvas(cw, chh);
+  const g = c2.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.drawImage(img, (1200 - cw) / 2 - 40, (800 - chh) / 2 - 30, cw, chh, 0, 0, cw, chh);
+  writeFileSync('/tmp/city-r' + ri + '.png', c2.toBuffer('image/png'));
+  console.log('  → /tmp/city-r' + ri + '.png  (' + RACE_CN[ri] + ' ' + c.name + ')');
+}
+
+// 单位特写：强制摆放 4 族 × 3 职业 = 12 个样本
+const spot = live[0];
+const demo = [];
+const jobs = ['soldier', 'farmer', 'priest'];
+for (let r = 0; r < 4; r++) {
+  for (let j = 0; j < 3; j++) {
+    demo.push({
+      id: 90000 + r * 10 + j, race: r, job: jobs[j], nation: 0, home: spot.id,
+      x: spot.x + 1.0 + j * 1.7, y: spot.y + 2.0 + r * 1.7,
+      tx: 0, ty: 0, state: 'idle', timer: 0, anim: 0, hp: 100, dir: 2,
+    });
+  }
+}
+world.units = [...world.units, ...demo];
+r.cam.zoom = 40; r.cam.x = spot.x + 2.7; r.cam.y = spot.y + 4.55;
+r.markDirty(); r.camDirty = true; r.render(world);
+{
+  const full = await display.encode('png');
+  const { loadImage } = await import('@napi-rs/canvas');
+  const img = await loadImage(full);
+  const cw = 420, chh = 450;
+  const c2 = createCanvas(cw, chh);
+  const cx2 = c2.getContext('2d');
+  cx2.imageSmoothingEnabled = false;
+  cx2.drawImage(img, (1200 - cw) / 2, (800 - chh) / 2, cw, chh, 0, 0, cw, chh);
+  writeFileSync('/tmp/units-close.png', c2.toBuffer('image/png'));
+}
+console.log('  → /tmp/units-close.png  (4族×3职业 样本)');
+world.units = world.units.filter((u) => u.id < 90000);
 
 // 奇观特写：手动放一座已建成的世界之树
 const ws = live[0];

@@ -342,6 +342,31 @@ export interface Wonder {
   ruined: boolean;
 }
 
+/** 市民职业 */
+export type Job = 'farmer' | 'wood' | 'mine' | 'soldier' | 'priest' | 'child';
+
+/** 一个真实存在于地图上的个体 */
+export interface Unit {
+  id: number;
+  race: number;
+  job: Job;
+  nation: number;
+  /** 所属城池 */
+  home: number;
+  x: number;
+  y: number;
+  /** 目标点 */
+  tx: number;
+  ty: number;
+  state: 'idle' | 'walk' | 'work' | 'fight';
+  timer: number;
+  /** 动画帧计数（走路摆腿用） */
+  anim: number;
+  hp: number;
+  /** 朝向 0下 1左 2右 3上 */
+  dir: number;
+}
+
 export interface World {
   w: number;
   h: number;
@@ -363,6 +388,7 @@ export interface World {
   agents: Agent[];
   beasts: Beast[];
   wonders: Wonder[];
+  units: Unit[];
   events: ChronicleEvent[];
   stats: Stats;
   // ---- 流程 ----

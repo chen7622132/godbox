@@ -2,6 +2,14 @@ import { T, IS_LAND, type World } from '../core/types';
 import { RACES } from '../core/races';
 import { genTree, genRock, genBush, genPuddle, blit, packPx, type Sprite } from './sprites';
 
+/** 四族外观：体型、肤色、衣着、发色 —— WorldBox 就是靠这几项区分种族的 */
+const RACE_LOOK = [
+  { skin: '#f2cfa8', cloth: '#3d6fa8', cloth2: '#2c5480', hair: '#5a3b22', w: 1.0, h: 1.0 },   // 人类
+  { skin: '#e9e2cc', cloth: '#4a8f5c', cloth2: '#356b44', hair: '#d8e4b0', w: 0.86, h: 1.14 },  // 精灵
+  { skin: '#e0b088', cloth: '#8a5a2b', cloth2: '#6b4420', hair: '#7a4a22', w: 1.2, h: 0.86 },   // 矮人
+  { skin: '#7a9a52', cloth: '#a83d3d', cloth2: '#7d2b2b', hair: '#2a1a12', w: 1.24, h: 1.02 },  // 兽人
+];
+
 /**
  * 地形基础色 [r,g,b] —— 取自 WorldBox 官方地形表「方块颜色」
  * 深海 #2D61AF / 浅滩 #55AEF0 / 沙 #F7E898 / 草 #76B153 / 林 #46A052
@@ -268,6 +276,7 @@ export class Renderer {
     this.drawRoads(world);
     this.drawSettlements(world);
     this.drawWonders(world);
+    this.drawUnits(world);
     this.drawBeasts(world);
     this.drawHover();
   }
@@ -526,6 +535,143 @@ export class Renderer {
   }
 
   // ==================== 道路 ====================
+
+  // ==================== 单位（真实个体）====================
+
+  /**
+   * 画每一个市民。
+   *
+   * WorldBox 的做法值得学：小人只有 8~12 像素高，二头身，不描黑边，
+   * 靠「肤色 + 衣色 + 一件道具」区种族和职业。远看是一片活的蚁群，
+   * 近看每个人都不一样 —— 这才是上帝视角的乐趣所在。
+   */
+  private drawUnits(world: World): void {
+    const z = this.cam.zoom;
+    if (z < 6 || !world.units?.length) return;
+    const { ctx } = this;
+
+    for (const u of world.units) {
+      const [sx, sy] = this.worldToScreen(u.x, u.y);
+      if (sx < -20 || sy < -20 || sx > this.cssW + 20 || sy > this.cssH + 20) continue;
+
+      const look = RACE_LOOK[u.race] ?? RACE_LOOK[0];
+      const kid = u.job === 'child';
+      // 小人始终保持在 7~32px：太小看不见，太大盖住房子
+      // 单位约半格高：既能看清头身，又不至于盖住房子
+      const H = Math.max(6, Math.min(26, Math.round(z * (kid ? 0.34 : 0.55) * look.h)));
+      const W = Math.max(4, Math.round(H * 0.58 * look.w));
+
+      // 二头身：头占三分之一，这是 WorldBox 好认的关键
+      const headH = Math.max(3, Math.round(H * 0.34));
+      const bodyH = Math.max(3, Math.round(H * 0.4));
+      const legH = Math.max(1, H - headH - bodyH);
+
+      const bx = Math.round(sx - W / 2);
+      const byFoot = Math.round(sy + H / 2);
+      const byHead = byFoot - H; // 头顶
+      const byBody = byHead + headH;
+      const byLeg = byBody + bodyH;
+
+      // 走路时两腿交替
+      const swing = u.state === 'walk' && Math.floor(u.anim / 4) % 2 === 0;
+
+      // 脚下投影
+      ctx.fillStyle = 'rgba(10,14,10,0.34)';
+      ctx.fillRect(bx, byFoot - 1, W, Math.max(1, Math.round(H * 0.09)));
+
+      // 腿
+      ctx.fillStyle = look.cloth2;
+      const legW = Math.max(1, Math.round(W * 0.34));
+      ctx.fillRect(bx, byLeg, legW, legH - (swing ? 1 : 0));
+      ctx.fillRect(bx + W - legW, byLeg, legW, legH - (swing ? 0 : 1));
+
+      // 身体
+      ctx.fillStyle = u.job === 'priest' ? '#e8e4d4' : look.cloth;
+      ctx.fillRect(bx, byBody, W, bodyH);
+      // 身体高光（左侧一道亮边，像光从左上来）
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.fillRect(bx, byBody, Math.max(1, Math.round(W * 0.28)), bodyH);
+
+      // 手臂：身体两侧各一条，走路时前后摆
+      if (W >= 5) {
+        ctx.fillStyle = look.skin;
+        const armH = Math.max(1, Math.round(bodyH * (swing ? 0.7 : 1)));
+        ctx.fillRect(bx - 1, byBody + (swing ? 1 : 0), 1, armH);
+        ctx.fillRect(bx + W, byBody + (swing ? 0 : 1), 1, armH);
+      }
+
+      // 头
+      const headBack = u.dir === 3; // 背对镜头时看到的是头发
+      const hw = Math.max(2, Math.round(W * 1.02));
+      const hx = Math.round(sx - hw / 2);
+      ctx.fillStyle = headBack ? look.hair : look.skin;
+      ctx.fillRect(hx, byHead, hw, headH);
+      // 头顶发型（种族特征）
+      if (!headBack) {
+        ctx.fillStyle = look.hair;
+        ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.32)));
+      }
+
+      // ---- 职业道具 ----
+      const px = Math.max(1, Math.round(W * 0.34));
+      if (u.job === 'soldier') {
+        // 铁盔 + 矛
+        ctx.fillStyle = '#9aa4b2';
+        ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.5)));
+        ctx.fillStyle = '#e6eef6';
+        ctx.fillRect(bx + W + 1, byHead - 1, Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
+      } else if (u.job === 'wood') {
+        // 斧
+        ctx.fillStyle = '#8a5a2b';
+        ctx.fillRect(bx + W + 1, byBody, Math.max(1, Math.round(W * 0.28)), Math.round(H * 0.5));
+        ctx.fillStyle = '#dfe6ee';
+        ctx.fillRect(bx + W, byBody - Math.round(H * 0.16), Math.max(2, Math.round(W * 0.55)), Math.max(2, Math.round(H * 0.16)));
+      } else if (u.job === 'mine') {
+        // 矿工帽
+        ctx.fillStyle = '#6a6a72';
+        ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.42)));
+        ctx.fillStyle = '#ffd447';
+        ctx.fillRect(hx + Math.round(hw / 2) - 1, byHead, 1, 1);
+      } else if (u.job === 'farmer') {
+        // 草帽
+        ctx.fillStyle = '#d9b45a';
+        ctx.fillRect(hx - 1, byHead, hw + 2, Math.max(1, Math.round(headH * 0.3)));
+      } else if (u.job === 'priest') {
+        // 金色法杖
+        ctx.fillStyle = '#c8a63a';
+        ctx.fillRect(bx + W + 1, byHead - 1, Math.max(1, Math.round(W * 0.28)), Math.round(H * 0.82));
+        ctx.fillStyle = '#ffe27a';
+        ctx.fillRect(bx + W, byHead - 3, Math.max(2, Math.round(W * 0.5)), Math.max(2, Math.round(W * 0.5)));
+      }
+
+      // 兽人獠牙（很小的一个白点，但一眼认出）
+      if (u.race === 3 && !headBack && headH >= 3) {
+        ctx.fillStyle = '#efe7d2';
+        ctx.fillRect(hx, byHead + headH - 1, 1, 1);
+        ctx.fillRect(hx + hw - 1, byHead + headH - 1, 1, 1);
+      }
+      // 精灵尖耳
+      if (u.race === 1 && !headBack && headH >= 3) {
+        ctx.fillStyle = look.skin;
+        ctx.fillRect(hx - 1, byHead + Math.round(headH * 0.4), 1, 1);
+        ctx.fillRect(hx + hw, byHead + Math.round(headH * 0.4), 1, 1);
+      }
+      // 矮人大胡子
+      if (u.race === 2 && headH >= 3) {
+        ctx.fillStyle = look.hair;
+        ctx.fillRect(hx, byHead + headH - 1, hw, 1);
+      }
+
+      // 战斗中的红闪
+      if (u.state === 'fight') {
+        const f = Math.floor(Date.now() / 90) % 2 === 0;
+        if (f) {
+          ctx.fillStyle = 'rgba(255,90,60,0.85)';
+          ctx.fillRect(bx + W, byBody - 2, 2, 2);
+        }
+      }
+    }
+  }
 
   // ==================== 世界奇观 ====================
 
@@ -922,7 +1068,7 @@ export class Renderer {
         const rr = spread * (ring === 0 ? 0.4 : 1) * (0.92 + h2(seed + 41, k) * 0.16);
         const bx = sx + Math.cos(a) * rr;
         const by = sy + Math.sin(a) * rr * 0.7;
-        this.drawHouse(bx, by, unit * 0.72, unit * 0.7, roof, roofDark, k % 3 === 0, k % 2 === 0);
+        this.drawHouse(bx, by, unit * 0.72, unit * 0.7, roof, roofDark, k % 3 === 0, k % 2 === 0, s.race);
       }
 
       // ---- 破损：愤怒的民众砸出来的洞（情绪可视化里最直观的一种）----
@@ -1053,7 +1199,7 @@ export class Renderer {
 
       // 都城王宫
       if (s.capital && s.tier >= 2) {
-        this.drawHouse(sx, sy - unit * 0.15, unit * 1.05, unit * 1.0, roof, roofDark, true, true);
+        this.drawHouse(sx, sy - unit * 0.15, unit * 1.15, unit * 1.1, roof, roofDark, true, true, s.race);
         ctx.fillStyle = '#8a7a55';
         ctx.fillRect(Math.round(sx), Math.round(sy - unit * 1.5), Math.max(1, unit * 0.1), Math.round(unit * 0.9));
         ctx.fillStyle = race.color;
@@ -1065,47 +1211,7 @@ export class Renderer {
         );
       }
 
-      // 小人
-      if (z >= 5) {
-        const people = Math.min(9, Math.max(4, Math.floor(s.pop / 65)));
-        const pseed = s.id * 131 + 7;
-        const headW = Math.max(4, Math.round(z * 0.4));
-        const bodyW = Math.max(4, Math.round(z * 0.42));
-        const bodyH = Math.max(6, Math.round(z * 0.7));
-        const skin = '#f4d3ae';
-
-        for (let k = 0; k < people; k++) {
-          const a = (k / people) * Math.PI * 2 + h2(pseed, k) * 0.5;
-          // 幸福度低的人缩在家里 —— 地图上就会出现「空街」
-          const homely = (s.happiness ?? 0) < -20 ? 0.5 : 1;
-          const rr = unit * (1.95 + h2(pseed + 17, k) * 0.35) * homely;
-          const px = Math.round(sx + Math.cos(a) * rr);
-          const py = Math.round(sy + Math.sin(a) * rr * 0.72);
-          const topY = py - headW;
-          const legH = Math.max(2, Math.round(z * 0.22));
-          const totalH = headW + bodyH + legH;
-
-          // 深色底衬：让小人从绿地/沙地里"跳"出来（WorldBox 也是靠这个）
-          ctx.fillStyle = 'rgba(6,5,2,0.55)';
-          ctx.fillRect(px - 2, topY - 1, bodyW + 4, totalH + 3);
-          ctx.fillStyle = skin;
-          ctx.fillRect(px, topY, headW, headW);
-          ctx.fillStyle = shade(race.rgb, 0.7);
-          ctx.fillRect(px, topY, headW, Math.max(1, Math.round(headW * 0.42)));
-          ctx.fillStyle = k % 4 === 0 ? shade(race.rgb, 1.25) : shade(race.rgb, 0.9);
-          ctx.fillRect(px, topY + headW, bodyW, bodyH);
-          ctx.fillStyle = 'rgba(255,255,255,0.22)';
-          ctx.fillRect(px, topY + headW, bodyW, Math.max(1, Math.round(bodyH * 0.25)));
-          ctx.fillStyle = shade(race.rgb, 0.5);
-          ctx.fillRect(px, topY + headW + bodyH, Math.max(1, Math.round(bodyW * 0.42)), legH);
-          ctx.fillRect(
-            px + Math.max(1, Math.round(bodyW * 0.58)),
-            topY + headW + bodyH,
-            Math.max(1, Math.round(bodyW * 0.42)),
-            legH,
-          );
-        }
-      }
+      // 小人改由 drawUnits 统一绘制（真实个体，会走动）
 
       // 情绪图标：3 像素的脸画不出表情，情绪一律外化成头顶小图标
       if (z >= 5) {
@@ -1152,9 +1258,15 @@ export class Renderer {
   }
 
   /** 一栋房子：三角屋顶（明暗两面）+ 墙（明暗两面）+ 门窗 */
+  /**
+   * 一栋房子。四族各有一套建筑语言 —— 远看轮廓就能认出这是谁的城：
+   *   人类：木架 + 三角瓦顶        精灵：长在树上的圆形树屋
+   *   矮人：石墙 + 平顶 + 烟囱      兽人：兽皮圆棚 + 兽角
+   */
   private drawHouse(
     bx: number, by: number, hw: number, hh: number,
     roof: string, roofDark: string, lightWall: boolean, lightRoof: boolean,
+    race = 0,
   ): void {
     const { ctx } = this;
     const bw = Math.max(5, Math.round(hw));
@@ -1169,18 +1281,105 @@ export class Renderer {
     ctx.fillStyle = 'rgba(0,0,0,0.32)';
     ctx.fillRect(x0 + 2, y0 + bh - 1, bw, Math.max(2, Math.round(bh * 0.14)));
 
-    // 墙
+    if (race === 1) {
+      // ---------- 精灵：树屋 ----------
+      const tw = Math.max(2, Math.round(bw * 0.26));
+      ctx.fillStyle = '#4a3524';
+      ctx.fillRect(x0 + Math.round((bw - tw) / 2), eave, tw, wallH);
+      ctx.fillStyle = '#63472f';
+      ctx.fillRect(x0 + Math.round((bw - tw) / 2), eave, Math.max(1, Math.round(tw * 0.5)), wallH);
+      ctx.fillStyle = 'rgba(30,20,10,0.8)';
+      ctx.fillRect(x0 + Math.round(bw * 0.42), eave + Math.round(wallH * 0.45), Math.max(1, Math.round(bw * 0.16)), Math.max(2, wallH - Math.round(wallH * 0.45)));
+      // 木平台（横向栈道）—— 这是和背景森林拉开区别的关键
+      const plankY = eave + Math.round(wallH * 0.3);
+      ctx.fillStyle = '#c9a46a';
+      ctx.fillRect(x0 - 1, plankY, bw + 2, Math.max(1, Math.round(bh * 0.1)));
+      ctx.fillStyle = 'rgba(60,40,20,0.45)';
+      ctx.fillRect(x0 - 1, plankY + Math.max(1, Math.round(bh * 0.1)) - 1, bw + 2, 1);
+
+      const cy = eave - Math.round(bh * 0.2);
+      const cr = Math.max(3, Math.round(bw * 0.66));
+      // 深色轮廓：让树冠从背景森林里浮出来
+      ctx.fillStyle = '#123d12';
+      ctx.beginPath(); ctx.ellipse(bx, cy, cr + 1, cr * 0.86 + 1, 0, 0, Math.PI * 2); ctx.fill();
+      // 主体用比环境亮得多的绿
+      ctx.fillStyle = '#6fc356';
+      ctx.beginPath(); ctx.ellipse(bx, cy, cr, cr * 0.82, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8fd96f';
+      ctx.beginPath(); ctx.ellipse(bx - cr * 0.24, cy - cr * 0.22, cr * 0.68, cr * 0.58, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#b6e88f';
+      ctx.beginPath(); ctx.ellipse(bx - cr * 0.32, cy - cr * 0.4, cr * 0.36, cr * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+      // 窗口的暖光
+      ctx.fillStyle = 'rgba(255,226,140,0.95)';
+      ctx.fillRect(bx - 1, cy, 2, 2);
+      return;
+    }
+
+    if (race === 2) {
+      // ---------- 矮人：石屋 ----------
+      const stoneLit = lightWall ? '#a8a8a2' : '#8e8e88';
+      ctx.fillStyle = stoneLit;
+      ctx.fillRect(x0, eave, bw, wallH);
+      ctx.fillStyle = 'rgba(40,40,40,0.28)';
+      for (let r = 1; r < 4; r++) ctx.fillRect(x0, eave + Math.round((wallH * r) / 4), bw, 1);
+      ctx.fillStyle = 'rgba(40,40,40,0.2)';
+      for (let r = 0; r < 4; r++) {
+        ctx.fillRect(x0 + ((r % 2) ? Math.round(bw * 0.34) : Math.round(bw * 0.68)), eave + Math.round((wallH * r) / 4), 1, Math.max(1, Math.round(wallH / 4)));
+      }
+      ctx.fillStyle = 'rgba(0,0,0,0.24)';
+      ctx.fillRect(x0 + Math.round(bw * 0.66), eave, Math.round(bw * 0.34), wallH);
+      ctx.fillStyle = 'rgba(26,26,26,0.85)';
+      ctx.fillRect(x0 + Math.round(bw * 0.4), eave + Math.round(wallH * 0.3), Math.max(2, Math.round(bw * 0.22)), Math.max(2, wallH - Math.round(wallH * 0.3)));
+      ctx.fillStyle = lightRoof ? '#5b5e5c' : '#414545';
+      ctx.fillRect(x0 - 1, ridge, bw + 2, eave - ridge);
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.fillRect(x0 - 1, ridge, bw + 2, Math.max(1, Math.round((eave - ridge) * 0.3)));
+      ctx.fillStyle = '#6a6a66';
+      ctx.fillRect(x0 + Math.round(bw * 0.68), ridge - Math.round(bh * 0.2), Math.max(2, Math.round(bw * 0.16)), Math.round(bh * 0.24));
+      ctx.fillStyle = 'rgba(16,12,6,0.5)';
+      ctx.fillRect(x0, eave, bw, 1);
+      return;
+    }
+
+    if (race === 3) {
+      // ---------- 兽人：兽皮圆棚 ----------
+      const wallLit = lightWall ? '#7a5f42' : '#634c35';
+      ctx.fillStyle = wallLit;
+      ctx.fillRect(x0, eave, bw, wallH);
+      ctx.fillStyle = 'rgba(0,0,0,0.24)';
+      ctx.fillRect(x0 + Math.round(bw * 0.62), eave, Math.round(bw * 0.38), wallH);
+      ctx.fillStyle = 'rgba(20,14,8,0.88)';
+      ctx.fillRect(x0 + Math.round(bw * 0.38), eave + Math.round(wallH * 0.42), Math.max(2, Math.round(bw * 0.26)), Math.max(2, wallH - Math.round(wallH * 0.42)));
+      const cy = eave - Math.round(bh * 0.1);
+      const cr = Math.max(3, Math.round(bw * 0.58));
+      ctx.fillStyle = roofDark;
+      ctx.beginPath(); ctx.ellipse(bx, cy, cr, cr * 0.9, 0, Math.PI, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = roof;
+      ctx.beginPath(); ctx.ellipse(bx - cr * 0.18, cy - cr * 0.12, cr * 0.7, cr * 0.62, 0, Math.PI, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#efe7d2';
+      ctx.fillRect(x0 + Math.round(bw * 0.34), cy - cr - 2, 1, 2);
+      ctx.fillRect(x0 + Math.round(bw * 0.62), cy - cr - 2, 1, 2);
+      ctx.fillStyle = 'rgba(16,12,6,0.55)';
+      ctx.fillRect(x0, eave, bw, 1);
+      return;
+    }
+
+    // ---------- 人类：木架 + 三角瓦顶 ----------
     ctx.fillStyle = lightWall ? '#f4ecd6' : '#ddd1b2';
     ctx.fillRect(x0, eave, bw, wallH);
-    // 右墙背光
+    ctx.fillStyle = 'rgba(122,84,52,0.55)';
+    ctx.fillRect(x0, eave, bw, 1);
+    ctx.fillRect(x0, eave, 1, wallH);
+    ctx.fillRect(x0 + bw - 1, eave, 1, wallH);
+    ctx.fillRect(x0 + Math.round(bw * 0.5), eave, 1, wallH);
     ctx.fillStyle = 'rgba(0,0,0,0.22)';
     ctx.fillRect(x0 + Math.round(bw * 0.6), eave, Math.round(bw * 0.4), wallH);
-    // 窗
     if (bw >= 8) {
       ctx.fillStyle = 'rgba(48,38,24,0.7)';
-      ctx.fillRect(x0 + Math.round(bw * 0.1), eave + Math.round(wallH * 0.15), Math.max(1, Math.round(bw * 0.15)), Math.max(1, Math.round(wallH * 0.3)));
+      ctx.fillRect(x0 + Math.round(bw * 0.12), eave + Math.round(wallH * 0.18), Math.max(1, Math.round(bw * 0.14)), Math.max(1, Math.round(wallH * 0.28)));
+      ctx.fillStyle = 'rgba(255,214,120,0.55)';
+      ctx.fillRect(x0 + Math.round(bw * 0.12), eave + Math.round(wallH * 0.18), Math.max(1, Math.round(bw * 0.14)), 1);
     }
-    // 门
     if (bw >= 6) {
       ctx.fillStyle = 'rgba(42,32,20,0.85)';
       ctx.fillRect(
@@ -1191,7 +1390,6 @@ export class Renderer {
       );
     }
 
-    // 屋顶：三角，左亮右暗
     ctx.fillStyle = lightRoof ? roof : roofDark;
     ctx.beginPath();
     ctx.moveTo(x0 + bw * 0.5, ridge);
@@ -1206,7 +1404,10 @@ export class Renderer {
     ctx.lineTo(x0 + bw * 0.5, eave);
     ctx.closePath();
     ctx.fill();
-    // 屋脊高光 + 屋檐
+    ctx.fillStyle = 'rgba(0,0,0,0.16)';
+    for (let i = 1; i < 3; i++) {
+      ctx.fillRect(x0 + Math.round((bw * i) / 3), ridge + ((eave - ridge) * i) / 3, Math.max(1, Math.round(bw / 4)), 1);
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.fillRect(x0 + Math.round(bw * 0.42), ridge, Math.max(1, Math.round(bw * 0.16)), 1);
     ctx.fillStyle = 'rgba(16,12,6,0.5)';
