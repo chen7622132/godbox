@@ -41,9 +41,9 @@ export const SPEEDS = [0, 1, 2, 4, 8];
 
 // ============ 规模档位 ============
 export const WORLD_SIZES = {
-  small: { w: 160, h: 120, label: '小世界 160×120' },
-  medium: { w: 256, h: 192, label: '中世界 256×192' },
-  large: { w: 384, h: 288, label: '大世界 384×288' },
+  small: { w: 200, h: 150, label: '小世界 200×150' },
+  medium: { w: 320, h: 240, label: '中世界 320×240' },
+  large: { w: 480, h: 360, label: '大世界 480×360' },
 } as const;
 export type WorldSizeKey = keyof typeof WORLD_SIZES;
 

@@ -664,16 +664,18 @@ export class Renderer {
   /** 画一个单位（抽出来，供归并绘制逐个调用） */
   private paintOneUnit(world: World, u: World['units'][number], now: number): void {
     const z = this.cam.zoom;
-    if (z < 6) return;
+    if (z < 3) return;
     const { ctx } = this;
     {
       const [sx, sy] = this.worldToScreen(u.x, u.y);
       if (sx < -24 || sy < -24 || sx > this.cssW + 24 || sy > this.cssH + 24) return;
       const look = RACE_LOOK[u.race] ?? RACE_LOOK[0];
       const kid = u.job === 'child';
-      const extra = u.role === 'general' ? 0.43 : u.role === 'archer' ? 0.37 : 0.4;
-      const rawH = z * (kid ? 0.2 : extra) * look.h;
-      const H = rawH >= 27 ? 30 : rawH >= 23 ? 26 : rawH >= 19 ? 22 : rawH >= 15 ? 18 : Math.max(6, Math.round(rawH));
+      // WorldBox 的比例尺：房子约 0.95 格，人只有房子的 1/3 高 —— 也就是 0.3 格。
+      // 之前我们把人做到 0.4~0.43 格，人和房子差不多大，整张图就变成「娃娃屋」。
+      const extra = u.role === 'general' ? 0.4 : u.role === 'archer' ? 0.33 : 0.36;
+      const rawH = z * (kid ? 0.17 : extra) * look.h;
+      const H = rawH >= 24 ? 26 : rawH >= 20 ? 22 : rawH >= 16 ? 18 : rawH >= 13 ? 15 : rawH >= 10 ? 12 : Math.max(5, Math.round(rawH));
       const W = Math.max(3, Math.round(H * 0.56 * look.w));
       const flag = world.nations[u.nation]?.color ?? '#c8492f';
       paintUnit(ctx, sx, sy, H, W, u, look, now, flag);
@@ -715,7 +717,7 @@ export class Renderer {
 
   private drawUnits(world: World): void {
     const z = this.cam.zoom;
-    if (z < 6 || !world.units?.length) return;
+    if (z < 3 || !world.units?.length) return;
     const { ctx } = this;
     const now = Date.now();
 

@@ -142,10 +142,14 @@ export function paintUnit(
     const hh0 = Math.max(1, Math.round(H * 0.34));
     const bx0 = Math.round(sx - W / 2);
     const byFoot0 = Math.round(sy + H / 2);
-    ctx.fillStyle = 'rgba(10,14,10,0.3)';
-    ctx.fillRect(bx0, byFoot0, W, 1);
-    ctx.fillStyle = u.job === 'soldier' ? flagCol : u.job === 'priest' ? '#e8e4d4' : look.cloth;
+    // 全景（人只有 5~7px）：靠「深色底座 + 高饱和身体 + 亮色头」三块从地面里跳出来。
+    // WorldBox 的远景观感就是这么来的 —— 不是细节，是对比。
+    ctx.fillStyle = 'rgba(8,10,8,0.55)';
+    ctx.fillRect(bx0 - 1, byFoot0, W + 2, 2);
+    ctx.fillStyle = u.job === 'soldier' ? flagCol : u.job === 'priest' ? '#f6f2e2' : lit(look.cloth, 0.12);
     ctx.fillRect(bx0, byFoot0 - H + hh0, W, H - hh0);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(bx0 + W - 1, byFoot0 - H + hh0, 1, H - hh0);
     ctx.fillStyle = look.skin;
     ctx.fillRect(Math.round(sx - hw0 / 2), byFoot0 - H, hw0, hh0);
     if (u.state === 'fight') {
