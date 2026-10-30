@@ -3,12 +3,6 @@ import { RACES } from '../core/races';
 import { genTree, genRock, genBush, genPuddle, blit, packPx, type Sprite } from './sprites';
 
 /** 四族外观：体型、肤色、衣着、发色 —— WorldBox 就是靠这几项区分种族的 */
-const RACE_LOOK = [
-  { skin: '#f2cfa8', cloth: '#3d6fa8', cloth2: '#2c5480', hair: '#5a3b22', w: 1.0, h: 1.0 },   // 人类
-  { skin: '#e9e2cc', cloth: '#4a8f5c', cloth2: '#356b44', hair: '#d8e4b0', w: 0.86, h: 1.14 },  // 精灵
-  { skin: '#e0b088', cloth: '#8a5a2b', cloth2: '#6b4420', hair: '#7a4a22', w: 1.2, h: 0.86 },   // 矮人
-  { skin: '#7a9a52', cloth: '#a83d3d', cloth2: '#7d2b2b', hair: '#2a1a12', w: 1.24, h: 1.02 },  // 兽人
-];
 
 /**
  * 地形基础色 [r,g,b] —— 取自 WorldBox 官方地形表「方块颜色」
@@ -52,6 +46,11 @@ const PLAGUE: [number, number, number] = [146, 62, 154];
 /** 缩放档位：必须是细节像素数的整数倍 */
 const ZOOM_STEPS = [1, 2, 3, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64];
 const ZOOM_MAX = 32;
+
+import { RACE_LOOK, paintUnit } from './unitsprite';
+
+// 图鉴脚本仍从 renderer 取这两个符号，保持对外接口不变
+export { paintUnit, RACE_LOOK as RACE_LOOK_EXPORT };
 
 function h2(x: number, y: number): number {
   let h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263);
@@ -610,8 +609,11 @@ export class Renderer {
       const look = RACE_LOOK[u.race] ?? RACE_LOOK[0];
       const kid = u.job === 'child';
       // 人约房子的 1/3 高：再小就看不见脸，再大就不像城
-      const extra = u.role === 'general' ? 0.34 : u.role === 'archer' ? 0.29 : 0.3;
-      const H = Math.max(5, Math.min(28, Math.round(z * (kid ? 0.18 : extra) * look.h)));
+      const extra = u.role === 'general' ? 0.43 : u.role === 'archer' ? 0.37 : 0.4;
+      // 身高吸附到 18 / 22 / 26 / 30 四档：像素小人必须在固定网格上画，
+      // 每帧浮动的 H 会让 1px 的细节时有时无（这是「看着糊」的真正原因之一）。
+      const rawH = z * (kid ? 0.2 : extra) * look.h;
+      const H = rawH >= 27 ? 30 : rawH >= 23 ? 26 : rawH >= 19 ? 22 : rawH >= 15 ? 18 : Math.max(6, Math.round(rawH));
       const W = Math.max(3, Math.round(H * 0.56 * look.w));
       const flag = world.nations[u.nation]?.color ?? '#c8492f';
       paintUnit(ctx, sx, sy, H, W, u, look, now, flag);
@@ -1818,7 +1820,6 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 /** 四族外观（图鉴脚本也用它） */
-export const RACE_LOOK_EXPORT = RACE_LOOK;
 
 /**
  * 画一个单位。所有细节都按身高分级 —— 小人矮的时候自动省略，
@@ -1826,357 +1827,6 @@ export const RACE_LOOK_EXPORT = RACE_LOOK;
  *
  * 这个函数被游戏渲染和图鉴脚本共用，避免「测试图好看、游戏里不一样」。
  */
-export function paintUnit(
-  ctx: CanvasRenderingContext2D,
-  sx: number,
-  sy: number,
-  H: number,
-  W: number,
-  u: { race: number; job: string; state: string; dir: number; anim: number; role?: string; fx?: number; fy?: number; swing?: number },
-  look: { skin: string; cloth: string; cloth2: string; hair: string; w: number; h: number },
-  now: number,
-  flagCol = '#c8492f',
-): void {
-  // 远景（人只有 5~7 像素）不值得画 40 个矩形 —— 那 90% 的细节都会糊成一个点。
-  // 这里退化成「三块色」：阵营色身体 + 肤色头 + 一条国色，帧率立刻回来。
-  if (H < 8) {
-    const hw0 = Math.max(2, Math.round(W * 1.02));
-    const hh0 = Math.max(1, Math.round(H * 0.34));
-    const bx0 = Math.round(sx - W / 2);
-    const byFoot0 = Math.round(sy + H / 2);
-    ctx.fillStyle = 'rgba(10,14,10,0.3)';
-    ctx.fillRect(bx0, byFoot0, W, 1);
-    // 士兵直接穿国色：远景下这是「分清敌我」最省像素的办法
-    ctx.fillStyle = u.job === 'soldier' ? flagCol : u.job === 'priest' ? '#e8e4d4' : look.cloth;
-    ctx.fillRect(bx0, byFoot0 - H + hh0, W, H - hh0);
-    ctx.fillStyle = look.skin;
-    ctx.fillRect(Math.round(sx - hw0 / 2), byFoot0 - H, hw0, hh0);
-    if (u.state === 'fight') {
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      ctx.fillRect(bx0 + W, byFoot0 - H + 1, 1, Math.max(1, Math.round(H * 0.5)));
-    }
-    return;
-  }
-
-  const L1 = H >= 7;   // 影子、手臂
-  const L2 = H >= 10;  // 眼睛、腰带、靴子
-  const L3 = H >= 16;  // 护鼻、盾纹、斧刃
-
-  const headH = Math.max(2, Math.round(H * 0.34));
-  const bodyH = Math.max(2, Math.round(H * 0.4));
-  const legH = Math.max(1, H - headH - bodyH);
-
-  const bx = Math.round(sx - W / 2);
-  const byFoot = Math.round(sy + H / 2);
-  const byHead = byFoot - H;
-  const byBody = byHead + headH;
-  const byLeg = byBody + bodyH;
-
-  const swing = u.state === 'walk' && Math.floor(u.anim / 4) % 2 === 0;
-
-  // ---- 影子 ----
-  if (L1) {
-    ctx.fillStyle = 'rgba(10,14,10,0.32)';
-    ctx.fillRect(bx, byFoot, W, Math.max(1, Math.round(H * 0.08)));
-  }
-
-  // ---- 腿 + 靴 ----
-  const legW = Math.max(1, Math.round(W * 0.34));
-  ctx.fillStyle = look.cloth2;
-  ctx.fillRect(bx, byLeg, legW, Math.max(1, legH - (swing ? 1 : 0)));
-  ctx.fillRect(bx + W - legW, byLeg, legW, Math.max(1, legH - (swing ? 0 : 1)));
-  if (L2 && legH >= 2) {
-    ctx.fillStyle = '#2a1d12';
-    ctx.fillRect(bx, byFoot - 1 - (swing ? 1 : 0), legW, 1);
-    ctx.fillRect(bx + W - legW, byFoot - 1 - (swing ? 0 : 1), legW, 1);
-  }
-
-  // ---- 身体 ----
-  const robe = u.job === 'priest';
-  ctx.fillStyle = robe ? '#e8e4d4' : look.cloth;
-  ctx.fillRect(bx, byBody, W, bodyH);
-  ctx.fillStyle = 'rgba(255,255,255,0.18)';
-  ctx.fillRect(bx, byBody, Math.max(1, Math.round(W * 0.3)), bodyH);
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  ctx.fillRect(bx + W - Math.max(1, Math.round(W * 0.24)), byBody, Math.max(1, Math.round(W * 0.24)), bodyH);
-  if (L2) {
-    ctx.fillStyle = 'rgba(40,28,16,0.66)';
-    ctx.fillRect(bx, byBody + Math.round(bodyH * 0.64), W, 1);
-  }
-  if (robe && L2) {
-    ctx.fillStyle = 'rgba(230,190,80,0.85)';
-    ctx.fillRect(bx + Math.round(W * 0.46), byBody, 1, bodyH);
-  }
-
-  // ---- 手臂 ----
-  if (L1) {
-    ctx.fillStyle = look.skin;
-    const armH = Math.max(1, Math.round(bodyH * (swing ? 0.7 : 1)));
-    ctx.fillRect(bx - 1, byBody + (swing ? 1 : 0), 1, armH);
-    ctx.fillRect(bx + W, byBody + (swing ? 0 : 1), 1, armH);
-  }
-
-  // ---- 头 ----
-  const headBack = u.dir === 3;
-  const hw = Math.max(2, Math.round(W * 1.04));
-  const hx = Math.round(sx - hw / 2);
-  ctx.fillStyle = headBack ? look.hair : look.skin;
-  ctx.fillRect(hx, byHead, hw, headH);
-
-  // 发型
-  if (!headBack) {
-    ctx.fillStyle = look.hair;
-    if (u.race === 2) {
-      // 矮人：秃顶，只留两侧鬓角
-      ctx.fillRect(hx, byHead + Math.max(1, Math.round(headH * 0.35)), 1, headH);
-      ctx.fillRect(hx + hw - 1, byHead + Math.max(1, Math.round(headH * 0.35)), 1, headH);
-    } else if (u.race === 1) {
-      // 精灵：刘海 + 两侧长发
-      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.3)));
-      ctx.fillRect(hx - 1, byHead + 1, 1, Math.max(1, Math.round(headH * 0.95)));
-      ctx.fillRect(hx + hw, byHead + 1, 1, Math.max(1, Math.round(headH * 0.95)));
-    } else if (u.race === 3) {
-      // 兽人：低额短发
-      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.44)));
-    } else {
-      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.34)));
-    }
-  }
-
-  // 眼睛
-  if (L2 && !headBack) {
-    ctx.fillStyle = 'rgba(20,12,8,0.92)';
-    const ey = byHead + Math.round(headH * 0.55);
-    if (hw >= 4) {
-      ctx.fillRect(hx + 1, ey, 1, 1);
-      ctx.fillRect(hx + hw - 2, ey, 1, 1);
-    } else {
-      ctx.fillRect(hx + Math.round(hw / 2), ey, 1, 1);
-    }
-  }
-
-  // 矮人大胡子：要占掉下半张脸并盖到胸口，否则看不出是胡子
-  if (u.race === 2) {
-    ctx.fillStyle = look.hair;
-    const bw2 = Math.max(3, Math.round(hw * 1.15));
-    const bh2 = Math.max(2, Math.round(headH * 0.62));
-    ctx.fillRect(Math.round(sx - bw2 / 2), byHead + Math.round(headH * 0.48), bw2, bh2);
-    // 胡子往胸口延伸一点，形成「一坨」而不是「一条线」
-    ctx.fillRect(Math.round(sx - bw2 / 2) + 1, byBody, Math.max(2, bw2 - 2), Math.max(1, Math.round(bodyH * 0.5)));
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
-    ctx.fillRect(Math.round(sx - bw2 / 2), byHead + Math.round(headH * 0.48) + bh2 - 1, bw2, 1);
-  }
-  // 兽人獠牙：2x2 的白块，小到 1px 会消失
-  if (u.race === 3 && !headBack && headH >= 3) {
-    ctx.fillStyle = '#f6f0dc';
-    const tw2 = headH >= 5 ? 2 : 1;
-    ctx.fillRect(hx, byHead + headH - tw2, tw2, tw2);
-    ctx.fillRect(hx + hw - tw2, byHead + headH - tw2, tw2, tw2);
-  }
-  // 精灵尖耳：必须是一块明显的凸起，1px 在缩放后会被完全抹平
-  if (u.race === 1 && !headBack && headH >= 3) {
-    ctx.fillStyle = look.skin;
-    const ey2 = byHead + Math.round(headH * 0.32);
-    const eh2 = Math.max(2, Math.round(headH * 0.42));
-    ctx.fillRect(hx - 2, ey2, 2, eh2);
-    ctx.fillRect(hx + hw, ey2, 2, eh2);
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(hx - 2, ey2 + eh2, 2, 1);
-    ctx.fillRect(hx + hw, ey2 + eh2, 2, 1);
-  }
-
-  // ---- 职业装备 ----
-  const eqW = Math.max(1, Math.round(W * 0.34));
-  if (u.job === 'soldier') {
-    const role = u.role ?? 'melee';
-    const bob = u.state === 'fight' ? Math.floor(now / 90) % 2 : 0;
-
-    if (role === 'general') {
-      // ---- 将军：羽饰头盔 + 披风 + 帅旗（全阵唯一的旗）----
-      ctx.fillStyle = '#b9c2cd';
-      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.58)));
-      ctx.fillStyle = '#dfe7ef';
-      ctx.fillRect(hx, byHead, hw, 1);
-      // 羽饰：一撮国色，必须够高才看得见
-      ctx.fillStyle = flagCol;
-      const fh = Math.max(2, Math.round(H * 0.22));
-      ctx.fillRect(Math.round(sx - 1), byHead - fh, 2, fh);
-      // 披风：背后一整片国色
-      ctx.fillStyle = flagCol;
-      ctx.fillRect(bx - 2, byBody - 1, 2, bodyH + 1);
-      ctx.fillStyle = 'rgba(0,0,0,0.22)';
-      ctx.fillRect(bx - 2, byBody + bodyH - 1, 2, 1);
-      // 旗杆：高过身体一截，远看就是一根竖线（紧贴身体，不然像悬空的）
-      const poleH = Math.max(5, Math.round(H * 1.55));
-      const poleW = Math.max(1, Math.round(W * 0.22));
-      ctx.fillStyle = '#5e3f22';
-      ctx.fillRect(bx + W + 1, byHead - poleH + 2, poleW, poleH);
-      // 旗面：宽过旗手大半个身位，右端随 anim 三段波动
-      const wav = (Math.floor(u.anim / 6) % 3) - 1;
-      const fw = Math.max(5, Math.round(W * 2.6));
-      const fh2 = Math.max(4, Math.round(H * 0.5));
-      const fx0 = bx + W + 1 + poleW;
-      const fyy = byHead - poleH + 2 + wav;
-      // 深色描边打底：白底旗在雪地/沙地上不会糊掉
-      ctx.fillStyle = 'rgba(20,16,12,0.62)';
-      ctx.fillRect(fx0 - 1, fyy - 1, fw + 2, fh2 + 2);
-      ctx.fillStyle = flagCol;
-      ctx.fillRect(fx0, fyy, fw, fh2);
-      // 飘动时右端多出一列，形成「布在飘」的错觉
-      if (wav !== 0) {
-        ctx.fillRect(fx0 + fw, fyy + (wav > 0 ? 1 : 0), 1, Math.max(2, fh2 - 1));
-      }
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.fillRect(fx0, fyy, fw, 1);
-      ctx.fillStyle = 'rgba(0,0,0,0.34)';
-      ctx.fillRect(fx0, fyy + fh2 - 1, fw, 1);
-      // 旗心一枚徽记：放大后才看得见的小十字
-      if (L3 && fw >= 6) {
-        ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.fillRect(fx0 + Math.round(fw / 2), fyy + 1, 1, Math.max(1, fh2 - 2));
-        ctx.fillRect(fx0 + Math.round(fw / 2) - 1, fyy + Math.round(fh2 / 2), 3, 1);
-      }
-    } else if (role === 'archer') {
-      // ---- 弓手：软帽 + 背后箭囊 + 一张竖弓 ----
-      ctx.fillStyle = '#57694f';
-      ctx.fillRect(hx - 1, byHead, hw + 2, Math.max(1, Math.round(headH * 0.4)));
-      ctx.fillStyle = '#3d4c38';
-      ctx.fillRect(hx - 1, byHead + Math.max(1, Math.round(headH * 0.4)) - 1, hw + 2, 1);
-      // 箭囊：左后侧一束，插两根白羽
-      if (L1) {
-        ctx.fillStyle = '#4a3a26';
-        ctx.fillRect(bx - 2, byBody, 2, Math.max(2, Math.round(bodyH * 0.8)));
-        ctx.fillStyle = '#eaf1f7';
-        ctx.fillRect(bx - 2, byBody - 2, 1, 2);
-        ctx.fillRect(bx - 1, byBody - 1, 1, 1);
-      }
-      // 弓：竖弧（上下各一个弯钩），宽度 2px 才在缩放后看得见
-      const bowH = Math.max(3, Math.round(H * 0.72));
-      const bowW = Math.max(1, Math.round(W * 0.2));
-      ctx.fillStyle = '#c9a155';
-      ctx.fillRect(bx + W + 1, byBody - 2 + bob, bowW, bowH);
-      ctx.fillRect(bx + W, byBody - 3 + bob, bowW, Math.max(1, Math.round(H * 0.1)));
-      ctx.fillRect(bx + W, byBody - 2 + bowH + bob, bowW, Math.max(1, Math.round(H * 0.1)));
-      // 弓弦：亮线，拉满时才看得出「在射」
-      ctx.fillStyle = 'rgba(245,248,235,0.72)';
-      ctx.fillRect(bx + W + 1 + bowW, byBody - 2 + bob, 1, bowH);
-      if (L3) {
-        // 拉弓时手在弦上
-        ctx.fillStyle = look.skin;
-        ctx.fillRect(bx + W + 1, byBody + Math.round(bowH * 0.4) + bob, 1, 1);
-      }
-    } else {
-      // ---- 近战：头盔 + 长矛 + 盾 ----
-      // 国色腰带：同族交战（比如兽人打兽人）时，这是唯一能分出敌我的东西
-      ctx.fillStyle = flagCol;
-      ctx.fillRect(bx, byBody + Math.max(1, Math.round(bodyH * 0.6)), W, Math.max(1, Math.round(H * 0.1)));
-      ctx.fillStyle = '#9aa4b2';
-      ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.58)));
-      ctx.fillStyle = '#c8d2dc';
-      ctx.fillRect(hx, byHead, hw, 1);
-      if (L3) {
-        ctx.fillStyle = '#7d8794';
-        ctx.fillRect(Math.round(sx), byHead, 1, Math.round(headH * 0.55));
-      }
-      // 长矛：矛杆 + 明显矛头
-      ctx.fillStyle = '#8a6a44';
-      ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.16), Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
-      ctx.fillStyle = '#eef4fa';
-      const sh2 = Math.max(2, Math.round(H * 0.22));
-      ctx.fillRect(bx + W, byHead - Math.round(H * 0.16) - sh2, Math.max(2, Math.round(W * 0.62)), sh2);
-      // 盾
-      if (L2) {
-        ctx.fillStyle = look.cloth2;
-        ctx.fillRect(bx - 3, byBody, 2, Math.max(2, Math.round(bodyH * 0.85)));
-        if (L3) {
-          ctx.fillStyle = '#d8dee6';
-          ctx.fillRect(bx - 3, byBody + Math.round(bodyH * 0.3), 1, 1);
-        }
-      }
-    }
-  } else if (u.job === 'wood') {
-    ctx.fillStyle = '#8a5a2b';
-    ctx.fillRect(bx + W + 1, byBody, Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.55));
-    ctx.fillStyle = '#e4ebf2';
-    ctx.fillRect(bx + W, byBody - Math.round(H * 0.22), Math.max(3, Math.round(W * 0.8)), Math.max(3, Math.round(H * 0.22)));
-    ctx.fillStyle = 'rgba(0,0,0,0.28)';
-    ctx.fillRect(bx + W, byBody - Math.round(H * 0.22) + Math.max(3, Math.round(H * 0.22)) - 1, Math.max(3, Math.round(W * 0.8)), 1);
-    if (L3) {
-      ctx.fillStyle = '#aab4c0';
-      ctx.fillRect(bx + W, byBody - Math.round(H * 0.2), 1, Math.max(2, Math.round(H * 0.2)));
-    }
-  } else if (u.job === 'mine') {
-    ctx.fillStyle = '#6a6a72';
-    ctx.fillRect(hx, byHead, hw, Math.max(1, Math.round(headH * 0.46)));
-    ctx.fillStyle = '#ffe27a';
-    ctx.fillRect(hx + Math.round(hw / 2), byHead, 1, 1);
-    ctx.fillStyle = '#8a5a2b';
-    ctx.fillRect(bx + W + 1, byBody - 1, 1, Math.round(H * 0.5));
-    ctx.fillStyle = '#9aa4b2';
-    ctx.fillRect(bx + W, byBody - 2, Math.max(2, eqW), 1);
-  } else if (u.job === 'farmer') {
-    ctx.fillStyle = '#d9b45a';
-    ctx.fillRect(hx - 1, byHead, hw + 2, Math.max(1, Math.round(headH * 0.34)));
-    ctx.fillStyle = '#c19a3e';
-    ctx.fillRect(hx - 1, byHead + Math.max(1, Math.round(headH * 0.34)) - 1, hw + 2, 1);
-    if (L2) {
-      ctx.fillStyle = '#c8d2dc';
-      ctx.fillRect(bx + W + 1, byBody, 1, Math.round(H * 0.44));
-      ctx.fillRect(bx + W, byBody - 1, 2, 1);
-    }
-  } else if (u.job === 'priest') {
-    ctx.fillStyle = '#c8a63a';
-    ctx.fillRect(bx + W + 1, byHead - 1, Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.88));
-    ctx.fillStyle = '#ffe27a';
-    ctx.fillRect(bx + W, byHead - 3, Math.max(2, Math.round(W * 0.52)), Math.max(2, Math.round(W * 0.52)));
-    if (L2) {
-      ctx.fillStyle = 'rgba(255,226,140,0.6)';
-      ctx.fillRect(hx - 1, byHead - 2, hw + 2, 1);
-    }
-  }
-
-  // ---- 战斗 ----
-  if (u.state === 'fight') {
-    const ang = Math.atan2(u.fy ?? 0, u.fx ?? 1);
-    const swinging = (u.swing ?? 0) > 0;
-
-    // 扇形残影：只在「挥下去的那几帧」出现，半透明，像刀风扫过
-    if (swinging) {
-      const r1 = Math.max(6, W * 3.4);
-      ctx.beginPath();
-      ctx.moveTo(sx, sy);
-      ctx.arc(sx, sy, r1, ang - 0.9, ang + 0.9);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(226,244,255,0.22)';
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(sx, sy, r1, ang - 0.9, ang + 0.9);
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-      ctx.lineWidth = Math.max(1, Math.round(r1 * 0.08));
-      ctx.stroke();
-    }
-
-    // 兵器：近战是刀，弓手是弓（弓在装备阶段已画，这里只补挥击）
-    const t = Math.floor(now / 70);
-    if (u.role !== 'archer') {
-      const sw = swinging || t % 2 === 0;
-      ctx.fillStyle = '#f0f6fc';
-      if (sw) {
-        ctx.fillRect(bx + W + 1, byHead - Math.round(H * 0.3), Math.max(1, Math.round(W * 0.3)), Math.round(H * 0.9));
-        ctx.fillRect(bx + W, byHead - Math.round(H * 0.3), Math.round(W * 0.72), Math.max(1, Math.round(H * 0.13)));
-      } else {
-        ctx.fillRect(bx + W + 2, byBody - 1, Math.round(H * 0.44), Math.max(1, Math.round(W * 0.3)));
-      }
-    }
-    if (t % 2 === 0) {
-      ctx.fillStyle = 'rgba(210,28,18,0.9)';
-      ctx.fillRect(bx + W + 2, byBody + 1, 2, 2);
-      ctx.fillRect(bx - 3, byBody - 2, 2, 2);
-    }
-  }
-}
-
-
 export function paintStruct(
   ctx: CanvasRenderingContext2D,
     bx: number, by: number, hw: number, hh: number,

@@ -6,6 +6,9 @@
  * 输出：/tmp/unit-sheet.png
  */
 import { createCanvas } from '@napi-rs/canvas';
+
+// paintUnit 内部要建离屏 canvas 做 sprite 缓存，这里补最小 DOM 桩
+globalThis.document = { createElement: () => createCanvas(1, 1) };
 import { writeFileSync } from 'node:fs';
 import { paintUnit, RACE_LOOK_EXPORT } from '../src/render/renderer.ts';
 
