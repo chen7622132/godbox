@@ -1119,34 +1119,34 @@ export class Renderer {
         } else if (sp.kind === 'workshop') {
           this.drawStruct(bx, by, unit * 1.05, unit * 0.95, {
             race: s.race, wall: wallDim, roof: rf, roofDark: rfd,
-            roofType: s.race === 1 ? 'tree' : s.race === 2 ? 'flat' : 'gable',
-            addon: s.race === 2 ? 'chimney' : 'goods', lit: true,
+            roofType: s.race === 2 ? 'flat' : 'gable',
+            addons: ['belfry', 'goods'], lit: true,
           });
           placed.push({ x: bx, y: by, w: unit * 1.05, h: unit * 0.95 });
         } else if (sp.kind === 'granary') {
           this.drawStruct(bx, by, unit * 0.92, unit * 1.05, {
             race: s.race, wall: wallLit, roof: shade([214, 178, 92], 1), roofDark: shade([170, 138, 66], 1),
-            roofType: 'dome', addon: 'goods', lit: false,
+            roofType: 'dome', addons: ['goods'], lit: false,
           });
           placed.push({ x: bx, y: by, w: unit * 0.92, h: unit * 1.05 });
         } else if (sp.kind === 'temple') {
           this.drawStruct(bx, by, unit * 1.1, unit * 1.3, {
             race: s.race, wall: wallLit, roof: '#e8e2cc', roofDark: '#b8b09a',
             roofType: s.race === 2 ? 'flat' : 'spire',
-            addon: s.race === 3 ? 'horns' : 'cross', lit: true,
+            addons: [s.race === 3 ? 'horns' : 'cross'], lit: true,
           });
           placed.push({ x: bx, y: by, w: unit * 1.1, h: unit * 1.3 });
         } else if (sp.kind === 'barracks') {
           this.drawStruct(bx, by, unit * 1.15, unit * 1.0, {
             race: s.race, wall: wallDim, roof: rfd, roofDark: shade(race.rgb, 0.42),
-            roofType: s.race === 1 ? 'tree' : s.race === 2 ? 'flat' : 'gable',
-            addon: 'shield', lit: true,
+            roofType: s.race === 2 ? 'flat' : 'gable',
+            addons: ['banner', 'shield', 'crenel'], lit: true,
           });
           placed.push({ x: bx, y: by, w: unit * 1.15, h: unit * 1.0 });
         } else {
           this.drawStruct(bx, by, unit * 0.7, unit * 1.55, {
             race: s.race, wall: wallLit, roof: roof, roofDark,
-            roofType: 'flat', addon: 'banner', lit: true,
+            roofType: 'flat', addons: ['banner'], lit: true,
           });
           placed.push({ x: bx, y: by, w: unit * 0.7, h: unit * 1.55 });
         }
@@ -1419,196 +1419,11 @@ export class Renderer {
       roofDark: string;
       roofType: 'gable' | 'flat' | 'dome' | 'spire' | 'tree';
       addon?: 'chimney' | 'banner' | 'cross' | 'horns' | 'goods' | 'shield' | 'belfry';
+      addons?: string[];
       lit?: boolean;
     },
   ): void {
-    const { ctx } = this;
-    const bw = Math.max(6, Math.round(hw));
-    const bh = Math.max(6, Math.round(hh));
-    const x0 = Math.round(bx - bw / 2);
-    const y0 = Math.round(by - bh / 2);
-    const eave = y0 + Math.round(bh * 0.48);
-    const wallH = Math.max(2, y0 + bh - eave);
-    const ridge = y0 + Math.round(bh * 0.04);
-
-    // 落地影
-    ctx.fillStyle = 'rgba(0,0,0,0.30)';
-    ctx.fillRect(x0 + 1, y0 + bh - 1, bw + 1, Math.max(2, Math.round(bh * 0.13)));
-
-    if (o.roofType === 'tree') {
-      // ---------- 精灵：树屋 ----------
-      const tw = Math.max(2, Math.round(bw * 0.24));
-      ctx.fillStyle = '#4a3524';
-      ctx.fillRect(x0 + Math.round((bw - tw) / 2), eave, tw, wallH);
-      ctx.fillStyle = '#63472f';
-      ctx.fillRect(x0 + Math.round((bw - tw) / 2), eave, Math.max(1, Math.round(tw * 0.5)), wallH);
-      // 木平台
-      const plankY = eave + Math.round(wallH * 0.26);
-      ctx.fillStyle = '#c9a46a';
-      ctx.fillRect(x0 - 1, plankY, bw + 2, Math.max(1, Math.round(bh * 0.1)));
-      ctx.fillStyle = 'rgba(60,40,20,0.5)';
-      ctx.fillRect(x0 - 1, plankY + Math.max(1, Math.round(bh * 0.1)) - 1, bw + 2, 1);
-      // 门洞
-      ctx.fillStyle = 'rgba(28,18,10,0.85)';
-      ctx.fillRect(x0 + Math.round(bw * 0.4), eave + Math.round(wallH * 0.55), Math.max(2, Math.round(bw * 0.2)), Math.max(2, wallH * 0.45));
-      // 树冠
-      const cy = eave - Math.round(bh * 0.22);
-      const cr = Math.max(4, Math.round(bw * 0.7));
-      ctx.fillStyle = '#123d12';
-      ctx.beginPath(); ctx.ellipse(bx, cy, cr + 1, cr * 0.86 + 1, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#6fc356';
-      ctx.beginPath(); ctx.ellipse(bx, cy, cr, cr * 0.82, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#8fd96f';
-      ctx.beginPath(); ctx.ellipse(bx - cr * 0.24, cy - cr * 0.22, cr * 0.68, cr * 0.58, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#b6e88f';
-      ctx.beginPath(); ctx.ellipse(bx - cr * 0.32, cy - cr * 0.4, cr * 0.36, cr * 0.3, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,226,140,0.95)';
-      ctx.fillRect(Math.round(bx) - 1, cy, 2, 2);
-      return;
-    }
-
-    // ---------- 墙体 ----------
-    ctx.fillStyle = o.wall;
-    ctx.fillRect(x0, eave, bw, wallH);
-    // 右墙背光
-    ctx.fillStyle = 'rgba(0,0,0,0.24)';
-    ctx.fillRect(x0 + Math.round(bw * 0.64), eave, Math.round(bw * 0.36), wallH);
-    // 材质纹理
-    if (o.race === 2) {
-      // 矮人：石缝
-      ctx.fillStyle = 'rgba(40,40,40,0.26)';
-      for (let r = 1; r < 3; r++) ctx.fillRect(x0, eave + Math.round((wallH * r) / 3), bw, 1);
-    } else if (o.race === 0) {
-      // 人类：木架
-      ctx.fillStyle = 'rgba(122,84,52,0.5)';
-      ctx.fillRect(x0, eave, bw, 1);
-      ctx.fillRect(x0, eave, 1, wallH);
-      ctx.fillRect(x0 + bw - 1, eave, 1, wallH);
-    } else if (o.race === 3) {
-      // 兽人：兽皮竖缝
-      ctx.fillStyle = 'rgba(30,20,12,0.3)';
-      for (let r = 1; r < 3; r++) ctx.fillRect(x0 + Math.round((bw * r) / 3), eave, 1, wallH);
-    }
-    // 门
-    ctx.fillStyle = 'rgba(38,28,18,0.86)';
-    ctx.fillRect(x0 + Math.round(bw * 0.42), eave + Math.round(wallH * 0.36), Math.max(2, Math.round(bw * 0.2)), Math.max(2, wallH * 0.64));
-    // 窗（亮灯）
-    if (bw >= 9) {
-      const wx = x0 + Math.round(bw * 0.13);
-      const wy = eave + Math.round(wallH * 0.22);
-      const ww = Math.max(1, Math.round(bw * 0.15));
-      const wh = Math.max(1, Math.round(wallH * 0.3));
-      ctx.fillStyle = o.lit ? 'rgba(255,214,120,0.92)' : 'rgba(52,42,28,0.72)';
-      ctx.fillRect(wx, wy, ww, wh);
-      ctx.fillRect(x0 + Math.round(bw * 0.72), wy, ww, wh);
-    }
-
-    // ---------- 屋顶 ----------
-    if (o.roofType === 'gable') {
-      ctx.fillStyle = o.roofDark;
-      ctx.beginPath();
-      ctx.moveTo(x0 + bw * 0.5, ridge);
-      ctx.lineTo(x0 + bw + 1, eave);
-      ctx.lineTo(x0 - 1, eave);
-      ctx.closePath();
-      ctx.fill();
-      // 左坡受光
-      ctx.fillStyle = o.roof;
-      ctx.beginPath();
-      ctx.moveTo(x0 + bw * 0.5, ridge);
-      ctx.lineTo(x0 + bw * 0.5, eave);
-      ctx.lineTo(x0 - 1, eave);
-      ctx.closePath();
-      ctx.fill();
-      // 瓦垄
-      ctx.fillStyle = 'rgba(0,0,0,0.14)';
-      for (let i = 1; i < 3; i++) {
-        ctx.fillRect(x0 + Math.round((bw * i) / 3), ridge + ((eave - ridge) * i) / 3, Math.max(1, Math.round(bw / 4)), 1);
-      }
-      ctx.fillStyle = 'rgba(255,255,255,0.38)';
-      ctx.fillRect(x0 + Math.round(bw * 0.44), ridge, Math.max(1, Math.round(bw * 0.14)), 1);
-    } else if (o.roofType === 'flat') {
-      ctx.fillStyle = o.roofDark;
-      ctx.fillRect(x0 - 1, ridge, bw + 2, eave - ridge);
-      ctx.fillStyle = o.roof;
-      ctx.fillRect(x0 - 1, ridge, bw + 2, Math.max(1, Math.round((eave - ridge) * 0.45)));
-      ctx.fillStyle = 'rgba(255,255,255,0.14)';
-      ctx.fillRect(x0 - 1, ridge, bw + 2, 1);
-    } else if (o.roofType === 'dome') {
-      const cy = eave;
-      const cr = Math.round(bw * 0.62);
-      ctx.fillStyle = o.roofDark;
-      ctx.beginPath(); ctx.ellipse(bx, cy, cr, cr * 0.92, 0, Math.PI, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = o.roof;
-      ctx.beginPath(); ctx.ellipse(bx - cr * 0.2, cy - cr * 0.1, cr * 0.66, cr * 0.6, 0, Math.PI, Math.PI * 2); ctx.fill();
-    } else {
-      // spire：尖顶（神庙）
-      const sh = Math.round(bh * 0.85);
-      ctx.fillStyle = o.roofDark;
-      ctx.beginPath();
-      ctx.moveTo(bx, eave - sh);
-      ctx.lineTo(x0 + bw + 1, eave);
-      ctx.lineTo(x0 - 1, eave);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = o.roof;
-      ctx.beginPath();
-      ctx.moveTo(bx, eave - sh);
-      ctx.lineTo(bx, eave);
-      ctx.lineTo(x0 - 1, eave);
-      ctx.closePath();
-      ctx.fill();
-    }
-    // 屋檐暗线
-    if (o.roofType !== 'dome' && o.roofType !== 'spire') {
-      ctx.fillStyle = 'rgba(14,10,6,0.5)';
-      ctx.fillRect(x0 - 1, eave, bw + 2, 1);
-    }
-
-    // ---------- 附件 ----------
-    const cx = Math.round(bx);
-    if (o.addon === 'chimney') {
-      ctx.fillStyle = '#6a6a66';
-      ctx.fillRect(x0 + Math.round(bw * 0.7), ridge - Math.round(bh * 0.2), Math.max(2, Math.round(bw * 0.14)), Math.round(bh * 0.26));
-      ctx.fillStyle = 'rgba(220,220,220,0.34)';
-      ctx.fillRect(x0 + Math.round(bw * 0.7) + 1, ridge - Math.round(bh * 0.3), Math.max(1, Math.round(bw * 0.1)), Math.round(bh * 0.12));
-    } else if (o.addon === 'banner') {
-      // 旗杆 + 旗帜（用种族色）
-      const px = x0 + bw - 2;
-      ctx.fillStyle = '#6a5a44';
-      ctx.fillRect(px, ridge - Math.round(bh * 0.55), 1, Math.round(bh * 0.6));
-      const flag = shade([200, 80, 60], 1);
-      ctx.fillStyle = o.roof;
-      void flag;
-      ctx.fillRect(px + 1, ridge - Math.round(bh * 0.55), Math.max(2, Math.round(bw * 0.22)), Math.max(2, Math.round(bh * 0.18)));
-    } else if (o.addon === 'cross') {
-      const py = ridge - Math.round(bh * 0.3);
-      ctx.fillStyle = '#ffd447';
-      ctx.fillRect(cx, py, 1, Math.max(2, Math.round(bh * 0.3)));
-      ctx.fillRect(cx - 1, py + 1, 3, 1);
-    } else if (o.addon === 'horns') {
-      ctx.fillStyle = '#efe7d2';
-      ctx.fillRect(x0 + Math.round(bw * 0.3), ridge - 2, 1, 2);
-      ctx.fillRect(x0 + Math.round(bw * 0.66), ridge - 2, 1, 2);
-    } else if (o.addon === 'goods') {
-      // 门口堆放的货物（木箱 / 麻袋）
-      ctx.fillStyle = '#8a5a2b';
-      ctx.fillRect(x0 + bw, eave + wallH - 2, 2, 2);
-      ctx.fillStyle = '#b8a878';
-      ctx.fillRect(x0 + bw, eave + wallH - 4, 2, 2);
-    } else if (o.addon === 'shield') {
-      // 门口挂的盾
-      ctx.fillStyle = '#9aa4b2';
-      ctx.fillRect(x0 - 2, eave + Math.round(wallH * 0.3), 2, 3);
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.fillRect(x0 - 2, eave + Math.round(wallH * 0.3), 1, 1);
-    } else if (o.addon === 'belfry') {
-      // 钟楼小亭
-      ctx.fillStyle = o.roofDark;
-      ctx.fillRect(cx - 2, ridge - 3, 4, 3);
-      ctx.fillStyle = '#c9a94a';
-      ctx.fillRect(cx - 1, ridge - 2, 2, 1);
-    }
+    paintStruct(this.ctx, bx, by, hw, hh, o);
   }
 
   /** 民居（保留旧接口，内部转到 drawStruct） */
@@ -1627,7 +1442,7 @@ export class Renderer {
       roof,
       roofDark,
       roofType,
-      addon: race === 2 ? 'chimney' : race === 3 ? 'horns' : undefined,
+      addons: race === 2 ? ['chimney'] : [],
       lit: Math.random() < 0.35,
     });
   }
@@ -1982,3 +1797,219 @@ export function paintUnit(
     }
   }
 }
+
+
+export function paintStruct(
+  ctx: CanvasRenderingContext2D,
+    bx: number, by: number, hw: number, hh: number,
+    o: {
+      race: number;
+      wall: string;
+      roof: string;
+      roofDark: string;
+      roofType: 'gable' | 'flat' | 'dome' | 'spire' | 'tree';
+      addon?: 'chimney' | 'banner' | 'cross' | 'horns' | 'goods' | 'shield' | 'belfry';
+      addons?: string[];
+      lit?: boolean;
+    },
+  ): void {
+    const bw = Math.max(6, Math.round(hw));
+    const bh = Math.max(6, Math.round(hh));
+    const x0 = Math.round(bx - bw / 2);
+    const y0 = Math.round(by - bh / 2);
+    const eave = y0 + Math.round(bh * 0.48);
+    const wallH = Math.max(2, y0 + bh - eave);
+    const ridge = y0 + Math.round(bh * 0.04);
+
+    // 落地影
+    ctx.fillStyle = 'rgba(0,0,0,0.30)';
+    ctx.fillRect(x0 + 1, y0 + bh - 1, bw + 1, Math.max(2, Math.round(bh * 0.13)));
+
+    if (o.roofType === 'tree') {
+      // ---------- 精灵：树屋 ----------
+      const tw = Math.max(2, Math.round(bw * 0.24));
+      ctx.fillStyle = '#4a3524';
+      ctx.fillRect(x0 + Math.round((bw - tw) / 2), eave, tw, wallH);
+      ctx.fillStyle = '#63472f';
+      ctx.fillRect(x0 + Math.round((bw - tw) / 2), eave, Math.max(1, Math.round(tw * 0.5)), wallH);
+      // 木平台
+      const plankY = eave + Math.round(wallH * 0.26);
+      ctx.fillStyle = '#c9a46a';
+      ctx.fillRect(x0 - 1, plankY, bw + 2, Math.max(1, Math.round(bh * 0.1)));
+      ctx.fillStyle = 'rgba(60,40,20,0.5)';
+      ctx.fillRect(x0 - 1, plankY + Math.max(1, Math.round(bh * 0.1)) - 1, bw + 2, 1);
+      // 门洞
+      ctx.fillStyle = 'rgba(28,18,10,0.85)';
+      ctx.fillRect(x0 + Math.round(bw * 0.4), eave + Math.round(wallH * 0.55), Math.max(2, Math.round(bw * 0.2)), Math.max(2, wallH * 0.45));
+      // 树冠
+      const cy = eave - Math.round(bh * 0.22);
+      const cr = Math.max(4, Math.round(bw * 0.7));
+      ctx.fillStyle = '#123d12';
+      ctx.beginPath(); ctx.ellipse(bx, cy, cr + 1, cr * 0.86 + 1, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#6fc356';
+      ctx.beginPath(); ctx.ellipse(bx, cy, cr, cr * 0.82, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8fd96f';
+      ctx.beginPath(); ctx.ellipse(bx - cr * 0.24, cy - cr * 0.22, cr * 0.68, cr * 0.58, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#b6e88f';
+      ctx.beginPath(); ctx.ellipse(bx - cr * 0.32, cy - cr * 0.4, cr * 0.36, cr * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,226,140,0.95)';
+      ctx.fillRect(Math.round(bx) - 1, cy, 2, 2);
+      return;
+    }
+
+    // ---------- 墙体 ----------
+    ctx.fillStyle = o.wall;
+    ctx.fillRect(x0, eave, bw, wallH);
+    // 右墙背光
+    ctx.fillStyle = 'rgba(0,0,0,0.24)';
+    ctx.fillRect(x0 + Math.round(bw * 0.64), eave, Math.round(bw * 0.36), wallH);
+    // 材质纹理
+    if (o.race === 2) {
+      // 矮人：石缝
+      ctx.fillStyle = 'rgba(40,40,40,0.26)';
+      for (let r = 1; r < 3; r++) ctx.fillRect(x0, eave + Math.round((wallH * r) / 3), bw, 1);
+    } else if (o.race === 0) {
+      // 人类：木架
+      ctx.fillStyle = 'rgba(122,84,52,0.5)';
+      ctx.fillRect(x0, eave, bw, 1);
+      ctx.fillRect(x0, eave, 1, wallH);
+      ctx.fillRect(x0 + bw - 1, eave, 1, wallH);
+    } else if (o.race === 3) {
+      // 兽人：兽皮竖缝
+      ctx.fillStyle = 'rgba(30,20,12,0.3)';
+      for (let r = 1; r < 3; r++) ctx.fillRect(x0 + Math.round((bw * r) / 3), eave, 1, wallH);
+    }
+    // 门
+    ctx.fillStyle = 'rgba(38,28,18,0.86)';
+    ctx.fillRect(x0 + Math.round(bw * 0.42), eave + Math.round(wallH * 0.36), Math.max(2, Math.round(bw * 0.2)), Math.max(2, wallH * 0.64));
+    // 窗（亮灯）
+    if (bw >= 9) {
+      const wx = x0 + Math.round(bw * 0.13);
+      const wy = eave + Math.round(wallH * 0.22);
+      const ww = Math.max(1, Math.round(bw * 0.15));
+      const wh = Math.max(1, Math.round(wallH * 0.3));
+      ctx.fillStyle = o.lit ? 'rgba(255,214,120,0.92)' : 'rgba(52,42,28,0.72)';
+      ctx.fillRect(wx, wy, ww, wh);
+      ctx.fillRect(x0 + Math.round(bw * 0.72), wy, ww, wh);
+    }
+
+    // ---------- 屋顶 ----------
+    if (o.roofType === 'gable') {
+      ctx.fillStyle = o.roofDark;
+      ctx.beginPath();
+      ctx.moveTo(x0 + bw * 0.5, ridge);
+      ctx.lineTo(x0 + bw + 1, eave);
+      ctx.lineTo(x0 - 1, eave);
+      ctx.closePath();
+      ctx.fill();
+      // 左坡受光
+      ctx.fillStyle = o.roof;
+      ctx.beginPath();
+      ctx.moveTo(x0 + bw * 0.5, ridge);
+      ctx.lineTo(x0 + bw * 0.5, eave);
+      ctx.lineTo(x0 - 1, eave);
+      ctx.closePath();
+      ctx.fill();
+      // 瓦垄
+      ctx.fillStyle = 'rgba(0,0,0,0.14)';
+      for (let i = 1; i < 3; i++) {
+        ctx.fillRect(x0 + Math.round((bw * i) / 3), ridge + ((eave - ridge) * i) / 3, Math.max(1, Math.round(bw / 4)), 1);
+      }
+      ctx.fillStyle = 'rgba(255,255,255,0.38)';
+      ctx.fillRect(x0 + Math.round(bw * 0.44), ridge, Math.max(1, Math.round(bw * 0.14)), 1);
+    } else if (o.roofType === 'flat') {
+      ctx.fillStyle = o.roofDark;
+      ctx.fillRect(x0 - 1, ridge, bw + 2, eave - ridge);
+      ctx.fillStyle = o.roof;
+      ctx.fillRect(x0 - 1, ridge, bw + 2, Math.max(1, Math.round((eave - ridge) * 0.45)));
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      ctx.fillRect(x0 - 1, ridge, bw + 2, 1);
+    } else if (o.roofType === 'dome') {
+      const cy = eave;
+      const cr = Math.round(bw * 0.62);
+      ctx.fillStyle = o.roofDark;
+      ctx.beginPath(); ctx.ellipse(bx, cy, cr, cr * 0.92, 0, Math.PI, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = o.roof;
+      ctx.beginPath(); ctx.ellipse(bx - cr * 0.2, cy - cr * 0.1, cr * 0.66, cr * 0.6, 0, Math.PI, Math.PI * 2); ctx.fill();
+    } else {
+      // spire：尖顶（神庙）
+      const sh = Math.round(bh * 0.85);
+      ctx.fillStyle = o.roofDark;
+      ctx.beginPath();
+      ctx.moveTo(bx, eave - sh);
+      ctx.lineTo(x0 + bw + 1, eave);
+      ctx.lineTo(x0 - 1, eave);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = o.roof;
+      ctx.beginPath();
+      ctx.moveTo(bx, eave - sh);
+      ctx.lineTo(bx, eave);
+      ctx.lineTo(x0 - 1, eave);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // 屋檐暗线
+    if (o.roofType !== 'dome' && o.roofType !== 'spire') {
+      ctx.fillStyle = 'rgba(14,10,6,0.5)';
+      ctx.fillRect(x0 - 1, eave, bw + 2, 1);
+    }
+
+    // ---------- 附件（可多个）----------
+    // 同族的民居/工坊/兵营如果只靠单附件区分，缩放下会糊成一类，
+    // 所以这里支持组合：工坊 = 烟囱 + 货箱，兵营 = 旗帜 + 盾 + 屋顶垛口
+    const cx = Math.round(bx);
+    const addons: string[] = (o as { addons?: string[] }).addons ?? (o.addon ? [o.addon] : []);
+    for (const ad of addons) {
+    if (ad === 'chimney') {
+      ctx.fillStyle = '#6a6a66';
+      ctx.fillRect(x0 + Math.round(bw * 0.7), ridge - Math.round(bh * 0.2), Math.max(2, Math.round(bw * 0.14)), Math.round(bh * 0.26));
+      ctx.fillStyle = 'rgba(220,220,220,0.34)';
+      ctx.fillRect(x0 + Math.round(bw * 0.7) + 1, ridge - Math.round(bh * 0.3), Math.max(1, Math.round(bw * 0.1)), Math.round(bh * 0.12));
+    } else if (ad === 'banner') {
+      // 旗杆 + 旗帜（用种族色）
+      const px = x0 + bw - 2;
+      ctx.fillStyle = '#6a5a44';
+      ctx.fillRect(px, ridge - Math.round(bh * 0.55), 1, Math.round(bh * 0.6));
+      const flag = shade([200, 80, 60], 1);
+      ctx.fillStyle = o.roof;
+      void flag;
+      ctx.fillRect(px + 1, ridge - Math.round(bh * 0.55), Math.max(2, Math.round(bw * 0.22)), Math.max(2, Math.round(bh * 0.18)));
+    } else if (ad === 'cross') {
+      const py = ridge - Math.round(bh * 0.3);
+      ctx.fillStyle = '#ffd447';
+      ctx.fillRect(cx, py, 1, Math.max(2, Math.round(bh * 0.3)));
+      ctx.fillRect(cx - 1, py + 1, 3, 1);
+    } else if (ad === 'horns') {
+      ctx.fillStyle = '#efe7d2';
+      ctx.fillRect(x0 + Math.round(bw * 0.3), ridge - 2, 1, 2);
+      ctx.fillRect(x0 + Math.round(bw * 0.66), ridge - 2, 1, 2);
+    } else if (ad === 'goods') {
+      // 门口堆放的货物（木箱 / 麻袋）
+      ctx.fillStyle = '#8a5a2b';
+      ctx.fillRect(x0 + bw, eave + wallH - 2, 2, 2);
+      ctx.fillStyle = '#b8a878';
+      ctx.fillRect(x0 + bw, eave + wallH - 4, 2, 2);
+    } else if (ad === 'crenel') {
+      // 屋顶垛口：军事建筑的剪影特征
+      ctx.fillStyle = o.roofDark;
+      const n = 4;
+      for (let i = 0; i < n; i++) {
+        const mx2 = Math.round(x0 + (bw * (i + 0.5)) / n - 1);
+        ctx.fillRect(mx2, ridge - 1, 2, 2);
+      }
+    } else if (ad === 'shield') {
+      // 门口挂的盾
+      ctx.fillStyle = '#9aa4b2';
+      ctx.fillRect(x0 - 2, eave + Math.round(wallH * 0.3), 2, 3);
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillRect(x0 - 2, eave + Math.round(wallH * 0.3), 1, 1);
+    } else if (ad === 'belfry') {
+      // 钟楼小亭
+      ctx.fillStyle = o.roofDark;
+      ctx.fillRect(cx - 2, ridge - 3, 4, 3);
+      ctx.fillStyle = '#c9a94a';
+      ctx.fillRect(cx - 1, ridge - 2, 2, 1);
+    }
+    }
+  }
