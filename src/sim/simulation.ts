@@ -529,6 +529,11 @@ function updateNations(world: World): void {
         killKing(world, n, king, deathCause, -1);
       }
     }
+
+    // 帝国裂解：疆域过大且已经打过仗的国家，边地会先离心
+    if (!n.fractured && n.cities.length >= 8 && n.warCount >= 1 && rng.chance(0.006)) {
+      splitNation(world, n);
+    }
   }
 
   // 3) 霸主巩固：城市数过半的国家每 200 tick 吸收一个邻近的独立聚落
@@ -925,6 +930,56 @@ function resolveCampaigns(world: World): void {
       }
       break; // 每轮只打一场
     }
+  }
+}
+
+/**
+ * 帝国裂解。历史动力学的基本结论：疆域一旦超过行政能力，
+ * 中央必然失去对边远城市的控制 —— 这不是随机事件，是结构性必然。
+ * 它给「强者恒强」上了第二道闸门，也是全篇最有分量的叙事之一。
+ */
+function splitNation(world: World, n: Nation): void {
+  const cities = n.cities
+    .map((id) => world.settlements[id])
+    .filter((s): s is Settlement => !!s && s.alive && !s.ruin);
+  if (cities.length < 7) return;
+
+  const c0 = nationCenter(world, n);
+  // 离都城最远的那一半先离心
+  cities.sort(
+    (a, b) => Math.hypot(b.x - c0.x, b.y - c0.y) - Math.hypot(a.x - c0.x, a.y - c0.y),
+  );
+  const half = cities.slice(0, Math.floor(cities.length / 2));
+  if (half.length < 3) return;
+
+  n.fractured = true;
+  for (const s of half) {
+    const i = n.cities.indexOf(s.id);
+    if (i >= 0) n.cities.splice(i, 1);
+  }
+
+  const nn = createNation(world, n.race, half);
+  nn.fractured = true;
+  nn.grudge = [...n.grudge];
+  nn.doctrine = 'conquer';
+
+  const king = nn.king >= 0 ? world.agents[nn.king] : undefined;
+  logEvent(
+    world, 'revolt',
+    `${n.name} 裂为二。边地诸城不再奉诏，拥立 ${king?.name ?? '新主'} 自立，国号 ${nn.name}。`,
+    n.race, 2,
+    {
+      actor: king?.name,
+      cause: `${n.name} 疆域已超出号令所及，边城距都城太远`,
+      quote: '「京城的命令到这里，已经晚了三个月。」',
+    },
+  );
+  if (king) {
+    king.deeds.push({
+      year: Math.round(world.year),
+      text: `自 ${n.name} 分裂而出，立 ${nn.name}`,
+      weight: 2,
+    });
   }
 }
 

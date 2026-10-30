@@ -90,6 +90,22 @@ async function moodShot(idx, mood, status, name) {
 await moodShot(0, 'happy', 'sing', 'mood-happy');
 await moodShot(1, 'sad', 'cry', 'mood-sad');
 await moodShot(2, 'angry', 'tantrum', 'mood-angry');
+
+// 巨兽特写：把一只巨兽挪到城边，确认画得出来
+if (world.beasts.length) {
+  const b0 = world.beasts[0];
+  b0.x = Math.round(big.x + 4);
+  b0.y = Math.round(big.y + 3);
+  b0.alive = true;
+  r.cam.zoom = 12;
+  r.cam.x = big.x;
+  r.cam.y = big.y;
+  r.markDirty();
+  r.camDirty = true;
+  r.render(world);
+  writeFileSync('/tmp/beast-close.png', await display.encode('png'));
+  console.log('  → /tmp/beast-close.png  (' + b0.name + ' tier' + b0.tier + ')');
+}
 console.log(`  最大城市：${big.name} 人口 ${Math.round(big.pop)} 等级 ${big.tier} 城墙 ${big.walls}`);
 
 // 4) 城市裁切特写：把屏幕上一块区域放大 4 倍，方便看清像素级细节

@@ -267,6 +267,7 @@ export class Renderer {
 
     this.drawRoads(world);
     this.drawSettlements(world);
+    this.drawBeasts(world);
     this.drawHover();
   }
 
@@ -524,6 +525,89 @@ export class Renderer {
   }
 
   // ==================== 道路 ====================
+
+  // ==================== 巨兽 ====================
+
+  /**
+   * 远古巨兽。俯瞰尺度下画成「暗红肉块 + 两只黄眼」就够了 ——
+   * 它存在的意义是让人一眼看到「那里有东西，而且它不该在那儿」。
+   */
+  private drawBeasts(world: World): void {
+    const z = this.cam.zoom;
+    if (z < 3) return;
+    const { ctx } = this;
+    const fr = Math.floor(Date.now() / 200); // 呼吸节奏：每 200ms 一变
+
+    for (const b of world.beasts) {
+      if (!b.alive) continue;
+      const [sx, sy] = this.worldToScreen(b.x + 0.5, b.y + 0.5);
+      if (sx < -100 || sy < -100 || sx > this.cssW + 100 || sy > this.cssH + 100) continue;
+
+      const big = b.tier === 0;
+      // 单位：小方块边长
+      const u = Math.max(1, Math.round(z * (big ? 0.34 : 0.26)));
+      const W = u * 9;
+      const H = u * 7;
+      const x0 = Math.round(sx - W / 2);
+      const y0 = Math.round(sy - H / 2);
+      const P = (cx: number, cy: number, w: number, h: number, color: string) => {
+        ctx.fillStyle = color;
+        ctx.fillRect(x0 + cx * u, y0 + cy * u, w * u, h * u);
+      };
+
+      // 地面暗影
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.beginPath();
+      ctx.ellipse(sx, sy + H * 0.42, W * 0.52, H * 0.22, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      const OUTLINE = '#1a0a12';
+      const DARK = big ? '#5a1c2b' : '#4a1f38';
+      const BODY = big ? '#8d2f40' : '#6d3350';
+      const LIT = big ? '#b44a52' : '#8a4568';
+      const SPIKE = '#2a0f1c';
+
+      // 深色轮廓：先铺一整块，再在上面叠身体 —— 保证剪影清晰
+      P(1, 2, 7, 4, OUTLINE);
+      P(2, 1, 5, 1, OUTLINE);
+      P(0, 3, 9, 2, OUTLINE);
+
+      // 背棘（3 根尖）
+      for (let i = 0; i < 3; i++) {
+        const sxk = 2 + i * 2;
+        P(sxk, 0, 1, 2, SPIKE);
+        P(sxk, 1, 1, 1, LIT);
+      }
+
+      // 躯干
+      P(1, 3, 7, 3, BODY);
+      P(2, 2, 5, 1, BODY);
+      // 高光（顶部）
+      P(2, 3, 4, 1, LIT);
+      // 腹甲（横向条纹）
+      P(2, 5, 5, 1, DARK);
+      P(1, 4, 1, 1, DARK);
+
+      // 四肢
+      P(1, 6, 2, 1, DARK);
+      P(6, 6, 2, 1, DARK);
+
+      // 头（朝下）
+      P(3, 6, 3, 1, BODY);
+
+      // 眼：呼吸式明灭
+      const pulse = 0.55 + Math.sin(fr * 0.25 + b.id * 2.1) * 0.45;
+      ctx.fillStyle = `rgba(255,196,64,${pulse.toFixed(2)})`;
+      ctx.fillRect(x0 + 3 * u, y0 + 3 * u, u, u);
+      ctx.fillRect(x0 + 5 * u, y0 + 3 * u, u, u);
+
+      // 受伤：血痕
+      if (b.hp < b.maxHp * 0.5) {
+        P(2, 4, 1, 1, '#ff6a4a');
+        P(6, 4, 1, 2, '#ff6a4a');
+      }
+    }
+  }
 
   private drawRoads(world: World): void {
     const z = this.cam.zoom;
