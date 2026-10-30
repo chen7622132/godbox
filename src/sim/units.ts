@@ -306,3 +306,121 @@ export function endBattles(world: World): void {
     return false;
   });
 }
+
+// ============ 行军 ============
+
+/** 一支正在路上的军队 */
+export interface March {
+  /** 出征国 */
+  nation: number;
+  /** 出发城 */
+  from: number;
+  /** 目标城 */
+  to: number;
+  /** 随军单位 id */
+  units: number[];
+  /** 预计抵达 tick */
+  arrive: number;
+  /** 是否已经打过（防重复） */
+  resolved: boolean;
+}
+
+/**
+ * 发兵：在出发城生成一队士兵，朝目标城开拔。
+ *
+ * 这是「看得见的战争」的关键 —— 之前是判定时凭空在城下冒出一群人，
+ * 现在玩家能看着一队人从这座城走出去、穿过原野、围到那座城下。
+ */
+export function launchMarch(world: World, fromCity: number, toCity: number, nation: number, race: number): March | null {
+  const a = world.settlements[fromCity];
+  const b = world.settlements[toCity];
+  if (!a || !b) return null;
+
+  const rng = new Rng((world.tick * 7919 + toCity * 131) ^ 0x3ab1);
+  const n = 6 + rng.int(8);
+  const ids: number[] = [];
+
+  // 排成一列横队：垂直行军方向排开，才看得出「一支兵」
+  const dx0 = b.x - a.x;
+  const dy0 = b.y - a.y;
+  const dl = Math.max(0.001, Math.hypot(dx0, dy0));
+  const fx = dx0 / dl;
+  const fy = dy0 / dl;
+  const px = -fy;
+  const py = fx;
+
+  for (let i = 0; i < n; i++) {
+    const side = (i - (n - 1) / 2) * 0.42;
+    const back = (i % 2) * 0.3;
+    const id = world.units.length;
+    world.units.push({
+      id,
+      race,
+      job: 'soldier',
+      nation,
+      home: fromCity,
+      x: a.x + 0.5 + fx * (0.8 - back) + px * side,
+      y: a.y + 0.5 + fy * (0.8 - back) + py * side,
+      tx: b.x + 0.5,
+      ty: b.y + 0.5,
+      state: 'walk',
+      timer: 400,
+      anim: rng.int(8),
+      hp: 100,
+      dir: 2,
+    });
+    ids.push(id);
+  }
+
+  const dist = Math.hypot(b.x - a.x, b.y - a.y);
+  return {
+    nation,
+    from: fromCity,
+    to: toCity,
+    units: ids,
+    arrive: world.tick + Math.max(30, Math.round(dist * 2.2)),
+    resolved: false,
+  };
+}
+
+/** 行军推进：把军队朝目标城挪，到了就返回 true（由战役逻辑接管） */
+export function advanceMarch(world: World, m: March): boolean {
+  const target = world.settlements[m.to];
+  if (!target) return true;
+  if (world.tick >= m.arrive) return true;
+
+  const alive = new Set(world.units.map((u) => u.id));
+  for (const id of m.units) {
+    if (!alive.has(id)) continue;
+    const u = world.units.find((x) => x.id === id);
+    if (!u) continue;
+    u.tx = target.x + 0.5;
+    u.ty = target.y + 0.5;
+    u.state = 'walk';
+    if (u.job === 'soldier') u.timer = 400;
+  }
+  return false;
+}
+
+/** 抵达后收编：把行军的士兵改成守城/冲锋状态 */
+export function arriveMarch(world: World, m: March, attackerWins: boolean): void {
+  const alive = new Set(world.units.map((u) => u.id));
+  const px = world.settlements[m.to]?.x ?? 0;
+  const py = world.settlements[m.to]?.y ?? 0;
+  for (const id of m.units) {
+    if (!alive.has(id)) continue;
+    const u = world.units.find((x) => x.id === id);
+    if (!u) continue;
+    if (attackerWins) {
+      u.state = 'idle';
+      u.timer = 60;
+    } else {
+      // 打输了：这批人从地图上撤走（败退）
+      u.x = px + (u.x - px) * 2.4;
+      u.y = py + (u.y - py) * 2.4;
+      u.state = 'walk';
+      u.tx = u.x + (u.x - px) * 3;
+      u.ty = u.y + (u.y - py) * 3;
+    }
+  }
+}

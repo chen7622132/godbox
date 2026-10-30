@@ -390,6 +390,7 @@ export interface World {
   wonders: Wonder[];
   units: Unit[];
   battles: { attackers: number[]; defenders: number[]; x: number; y: number; until: number; loserNation: number }[];
+  marches: { nation: number; from: number; to: number; units: number[]; arrive: number; resolved: boolean }[];
   events: ChronicleEvent[];
   stats: Stats;
   // ---- 流程 ----

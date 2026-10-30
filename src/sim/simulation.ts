@@ -9,7 +9,7 @@ import {
 import { Narrator, grandNum } from '../core/narrative';
 import { updateBeasts, maybeAwakenBeast } from './beasts';
 import { updateWonders, wonderBuff } from './wonders';
-import { updateUnits, syncUnitsToCities, spawnBattle, endBattles } from './units';
+import { updateUnits, syncUnitsToCities, spawnBattle, endBattles, launchMarch, advanceMarch, arriveMarch } from './units';
 import { findLandNear } from '../core/world';
 
 const rng = new Rng(1);
@@ -977,10 +977,28 @@ function nationPower(world: World, n: Nation, attacking: boolean): number {
   return power;
 }
 
+/**
+ * 战役流程（v2）：
+ *   发兵 → 行军（看得见的一队人从 A 城走到 B 城）→ 抵达才判定胜负。
+ *
+ * 原来的写法是「判定时在城下凭空生成两拨人」，玩家看到的是一场没有前因的混战。
+ */
 function resolveCampaigns(world: World): void {
+  // ---------- 1. 推进已在路上的军队 ----------
+  for (const m of world.marches) {
+    if (m.resolved) continue;
+    if (!advanceMarch(world, m)) continue;
+    m.resolved = true;
+    resolveArrival(world, m);
+  }
+  if (world.marches.length) world.marches = world.marches.filter((m) => !m.resolved);
+
+  // ---------- 2. 决定是否发新的兵 ----------
   for (const a of world.nations) {
     if (!a.alive || a.enemies.length === 0) continue;
     if (world.tick - a.lastCampaign < 60) continue;
+    // 同时只允许一支军队在路上，避免多线乱飞
+    if (world.marches.some((m) => m.nation === a.id)) continue;
 
     for (const eid of [...a.enemies]) {
       const b = world.nations[eid];
@@ -988,9 +1006,7 @@ function resolveCampaigns(world: World): void {
         a.enemies = a.enemies.filter((x) => x !== eid);
         continue;
       }
-      a.lastCampaign = world.tick;
 
-      // 选目标：b 的城市中离 a 领土最近的
       const ca = nationCenter(world, a);
       let target: Settlement | null = null;
       let best = Infinity;
@@ -1001,56 +1017,91 @@ function resolveCampaigns(world: World): void {
         if (d < best) { best = d; target = s; }
       }
       if (!target) continue;
-      if (best > 150) continue; // 太远，打不到
+      if (best > 150) continue;
 
-      const atk = nationPower(world, a, true) * (0.75 + rng.next() * 0.6);
-      const defense = nationPower(world, b, false)
-        * (1 + target.walls * 0.3)
-        * (target.capital ? 1.35 : 1)
-        * (0.8 + rng.next() * 0.45);
+      // 从离目标最近的本国城市发兵
+      let from = -1;
+      let fd = Infinity;
+      for (const id of a.cities) {
+        const s = world.settlements[id];
+        if (!s || !s.alive) continue;
+        const d = Math.hypot(s.x - target.x, s.y - target.y);
+        if (d < fd) { fd = d; from = id; }
+      }
+      if (from < 0) continue;
 
-      world.stats.battles++;
-      const ka = world.agents[a.king]?.name ?? '大将';
-      const kb = world.agents[b.king]?.name ?? '守将';
-
-      if (atk > defense) {
-        spawnBattle(world, target.id, a.race, a.id, true);
-        conquer(world, a, b, target, ka);
-        const ak = world.agents[a.king];
-        if (ak) ak.warsWon++;
-      } else {
-        // 攻方受挫
-        for (const id of a.cities) {
-          const s = world.settlements[id];
-          if (s && s.alive) s.pop *= 0.945;
-        }
-        a.warsLost++;
-        spawnBattle(world, target.id, a.race, a.id, false);
-        const ak = world.agents[a.king];
-        if (ak) {
-          ak.warsLost++;
-          ak.deeds.push({
+      a.lastCampaign = world.tick;
+      const march = launchMarch(world, from, target.id, a.id, a.race);
+      if (march) {
+        world.marches.push(march);
+        const ka = world.agents[a.king];
+        if (ka) {
+          ka.deeds.push({
             year: Math.round(world.year),
-            text: `攻 ${target.name} 不克，${narrator.defeatReaction()}`,
+            text: `自 ${world.settlements[from]?.name ?? '本国'} 发兵，趋 ${target.name}`,
             weight: 1,
           });
         }
-        logEvent(
-          world, 'battle',
-          narrator.defenseText(kb, b.name, ka, a.name, target.name),
-          b.race, 0,
-          { actor: kb, quote: narrator.defeatQuote(), cause: `${b.name} 城坚，攻之不克` },
-        );
       }
+      break;
+    }
+  }
+}
 
-      // 国王战死
-      if (rng.chance(0.006)) {
-        const king = world.agents[a.king];
-        if (king && king.alive) {
-          killKing(world, a, king, `战死于 ${target.name} 城下`, b.id);
-        }
-      }
-      break; // 每轮只打一场
+/** 军队抵达：这时候才真正结算这场战役 */
+function resolveArrival(world: World, m: World['marches'][number]): void {
+  const target = world.settlements[m.to];
+  if (!target || !target.alive) return;
+  const a = world.nations[m.nation];
+  const b = target.nation >= 0 ? world.nations[target.nation] : undefined;
+  if (!a || !a.alive || !b || !b.alive) return;
+
+  const atk = nationPower(world, a, true) * (0.75 + rng.next() * 0.6);
+  const defense = nationPower(world, b, false)
+    * (1 + target.walls * 0.3)
+    * (target.capital ? 1.35 : 1)
+    * (0.8 + rng.next() * 0.45);
+
+  world.stats.battles++;
+  const ka = world.agents[a.king]?.name ?? '大将';
+  const kb = world.agents[b.king]?.name ?? '守将';
+  const win = atk > defense;
+
+  spawnBattle(world, target.id, a.race, a.id, win);
+  arriveMarch(world, m, win);
+
+  if (win) {
+    conquer(world, a, b, target, ka);
+    const ak = world.agents[a.king];
+    if (ak) ak.warsWon++;
+  } else {
+    for (const id of a.cities) {
+      const s = world.settlements[id];
+      if (s && s.alive) s.pop *= 0.945;
+    }
+    a.warsLost++;
+    const ak = world.agents[a.king];
+    if (ak) {
+      ak.warsLost++;
+      ak.deeds.push({
+        year: Math.round(world.year),
+        text: `攻 ${target.name} 不克，${narrator.defeatReaction()}`,
+        weight: 1,
+      });
+    }
+    logEvent(
+      world, 'battle',
+      narrator.defenseText(kb, b.name, ka, a.name, target.name),
+      b.race, 0,
+      { actor: kb, quote: narrator.defeatQuote(), cause: `${b.name} 城坚，攻之不克` },
+    );
+  }
+
+  // 国王战死
+  if (rng.chance(0.006)) {
+    const king = world.agents[a.king];
+    if (king && king.alive) {
+      killKing(world, a, king, `战死于 ${target.name} 城下`, b.id);
     }
   }
 }
@@ -1163,6 +1214,10 @@ function killKing(world: World, n: Nation, k: Agent, cause: string, killerNation
 function conquer(world: World, a: Nation, b: Nation, target: Settlement, attackerName: string): void {
   const lost = Math.round(target.pop * 0.42);
   target.pop *= 0.58;
+  // 城破之后留下焦土：房屋大片破损，街上有人哭
+  target.damage = 1;
+  target.status = 'cry';
+  target.statusUntil = world.tick + 400;
   // 城破之后留下焦土：房屋大片破损，地上有烧灼痕迹
   target.damage = 1;
   target.status = 'cry';

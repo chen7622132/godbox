@@ -94,6 +94,35 @@ await moodShot(0, 'happy', 'sing', 'mood-happy');
 await moodShot(1, 'sad', 'cry', 'mood-sad');
 await moodShot(2, 'angry', 'tantrum', 'mood-angry');
 
+// 行军特写：让一队兵从 A 城开往 B 城
+{
+  const { launchMarch, advanceMarch } = await import('../src/sim/units.ts');
+  const sorted = live.sort((a, b) => b.pop - a.pop);
+  const A = sorted[0], B = sorted[1];
+  const m = launchMarch(world, A.id, B.id, A.nation >= 0 ? A.nation : 0, A.race);
+  if (m) {
+    world.marches.push(m);
+    for (let i = 0; i < 26; i++) { world.tick++; advanceMarch(world, m); }
+    const { loadImage } = await import('@napi-rs/canvas');
+    const us = m.units.map((uid) => world.units.find((u) => u.id === uid)).filter(Boolean);
+    const mx = us.length ? us.reduce((acc, u) => acc + u.x, 0) / us.length : A.x;
+    const my = us.length ? us.reduce((acc, u) => acc + u.y, 0) / us.length : A.y;
+    r.cam.zoom = 40;
+    r.cam.x = mx;
+    r.cam.y = my;
+    r.markDirty(); r.camDirty = true; r.render(world);
+    const f3 = await display.encode('png');
+    const i3 = await loadImage(f3);
+    const w3 = 480, h3 = 420;
+    const c4 = createCanvas(w3, h3);
+    const g4 = c4.getContext('2d');
+    g4.imageSmoothingEnabled = false;
+    g4.drawImage(i3, (1200 - w3) / 2, (800 - h3) / 2, w3, h3, 0, 0, w3, h3);
+    writeFileSync('/tmp/march.png', c4.toBuffer('image/png'));
+    console.log('  → /tmp/march.png  (' + A.name + ' → ' + B.name + ')');
+  }
+}
+
 // 地形取样：自动找一块地形最丰富的位置
 {
   let best = null, bestN = 0;
