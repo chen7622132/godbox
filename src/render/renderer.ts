@@ -10,16 +10,16 @@ import { genTree, genRock, genBush, genPuddle, blit, packPx, type Sprite } from 
  * 丘陵 #5B5E5C / 山 #414545 / 雪 #D3E4E3 / 沼泽 #746655
  */
 const PALETTE: [number, number, number][] = [
-  [45, 97, 175],   // 0 Deep   #2D61AF
-  [85, 174, 240],  // 1 Water  #55AEF0
-  [247, 232, 152], // 2 Sand   #F7E898
-  [118, 177, 83],  // 3 Grass  #76B153
-  [70, 160, 82],   // 4 Forest #46A052
-  [91, 94, 92],    // 5 Hill   #5B5E5C
-  [65, 69, 69],    // 6 Mountain #414545
-  [211, 228, 227], // 7 Snow   #D3E4E3
-  [116, 102, 85],  // 8 Swamp  #746655
-  [176, 169, 154], // 9 Ruin
+  [40, 104, 190],  // 0 Deep   更深更饱和，海才有「深度」
+  [94, 186, 248],  // 1 Water
+  [252, 240, 170], // 2 Sand
+  [124, 192, 86],  // 3 Grass  提亮 + 提饱和，这是整张图的基调
+  [60, 148, 74],   // 4 Forest 压深，和草地拉开层次
+  [108, 110, 98],  // 5 Hill   偏暖灰，不是死灰
+  [78, 82, 84],    // 6 Mountain
+  [222, 238, 238], // 7 Snow
+  [122, 108, 88],  // 8 Swamp
+  [182, 174, 158], // 9 Ruin
 ];
 
 /**
@@ -387,7 +387,7 @@ export class Renderer {
         const oy = y * T2;
         const ep = EDGE[t] ?? EDGE[0];
         // 放大后边缘同步加粗，保持「方块」质感
-        const ew = T2 >= 14 ? 2 : 1;
+        const ew = T2 >= 6 ? 2 : 1;
         const drawEdge = T2 >= 3;
         for (let py = 0; py < T2; py++) {
           const rowBase = (oy + py) * W + ox;
@@ -488,6 +488,16 @@ export class Renderer {
         if (townClear.has(i)) continue;
 
         if (t === T.Forest) {
+          // 林地底色再压几个暗点：树与树之间的缝隙本来就有阴影
+          if (T2 >= 3) {
+            for (let k = 0; k < 3; k++) {
+              const dx2 = cx + ((h2(x * 23 + k * 13, y * 37 + k * 5) * T2) | 0);
+              const dy2 = cy + ((h2(x * 41 + k * 3, y * 19 + k * 7) * T2) | 0);
+              if (dx2 > 0 && dy2 > 0 && dx2 < W - 1 && dy2 < H - 1) {
+                buf[dy2 * W + dx2] = 0xff2e5a34;
+              }
+            }
+          }
           // 密度随大尺度噪声变化：有的地方是密林，有的是林间空地
           const dens = vnoise(x * 0.13, y * 0.13, 23);
           if (rnd < 0.4 + dens * 0.55) {
@@ -495,6 +505,28 @@ export class Renderer {
             blit(buf, W, H, sp, cx + ((T2 - sp.w) >> 1) + jx, cy + T2 - sp.h + Math.round(T2 * 0.2) + jy);
           }
         } else if (t === T.Grass) {
+          // 草簇：每格撒 2~4 个 1px 深绿点。整片纯绿是最「假」的，
+          // 撒点之后地面才有颗粒感 —— 这是 WorldBox 草地看起来「活」的小秘密
+          if (T2 >= 3) {
+            const dots = 2 + ((rnd * 3) | 0);
+            for (let k = 0; k < dots; k++) {
+              const dx2 = cx + ((h2(x * 13 + k * 7, y * 17 + k * 11) * T2) | 0);
+              const dy2 = cy + ((h2(x * 29 + k * 5, y * 31 + k * 3) * T2) | 0);
+              if (dx2 > 0 && dy2 > 0 && dx2 < W - 1 && dy2 < H - 1) {
+                buf[dy2 * W + dx2] = k === 0 ? 0xff4a7a2c : 0xff5e8c36;
+              }
+            }
+          }
+          // 野花：极低概率，但一片草原上有几朵就活了
+          if (T2 >= 5 && rnd > 0.972) {
+            const fx2 = cx + ((h2(x * 61 + 7, y * 71 + 3) * (T2 - 2)) | 0) + 1;
+            const fy2 = cy + ((h2(x * 83 + 5, y * 97 + 9) * (T2 - 2)) | 0) + 1;
+            if (fx2 > 0 && fy2 > 0 && fx2 < W - 1 && fy2 < H - 1) {
+              const kind = (h2(x * 5, y * 7) * 3) | 0;
+              buf[fy2 * W + fx2] = kind === 0 ? 0xff8cc8f0 : kind === 1 ? 0xffe8e69c : 0xffc8a0f0;
+              buf[fy2 * W + fx2 + 1] = 0xff3f7a2a;
+            }
+          }
           const dens = vnoise(x * 0.11, y * 0.11, 29);
           if (rnd < dens * 0.18) {
             const sp = deco.tree[variant];
@@ -504,6 +536,15 @@ export class Renderer {
             blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         } else if (t === T.Hill) {
+          if (T2 >= 3) {
+            for (let k = 0; k < 2; k++) {
+              const dx2 = cx + ((h2(x * 31 + k * 7, y * 43 + k * 9) * T2) | 0);
+              const dy2 = cy + ((h2(x * 53 + k * 5, y * 23 + k * 11) * T2) | 0);
+              if (dx2 > 0 && dy2 > 0 && dx2 < W - 1 && dy2 < H - 1) {
+                buf[dy2 * W + dx2] = k === 0 ? 0xff6a6c62 : 0xff7c7e72;
+              }
+            }
+          }
           if (rnd < 0.16) {
             const sp = deco.rock[variant];
             blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
@@ -512,6 +553,16 @@ export class Renderer {
             blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
           }
         } else if (t === T.Mountain) {
+          // 山脊积雪：上方不是山的格子就是山脊线，压一道白 —— 山的「高度感」全靠这一道
+          const up = y > 0 ? terrain[(y - 1) * w + x] : T.Mountain;
+          if (up !== T.Mountain && T2 >= 4) {
+            for (let px2 = 0; px2 < T2; px2++) {
+              const xx = cx + px2;
+              if (xx < 0 || xx >= W) continue;
+              buf[cy * W + xx] = 0xfff2f2e8;
+              if (T2 >= 6) buf[(cy + 1) * W + xx] = 0xffd8e4e4;
+            }
+          }
           if (rnd < 0.4) {
             const sp = deco.rock[variant];
             blit(buf, W, H, sp, cx + jx, cy + T2 - sp.h + jy);
@@ -1203,7 +1254,7 @@ export class Renderer {
     ctx.lineCap = 'round';
     // 路基（深土色压底，让路从草地/沙地里"跳"出来）
     ctx.strokeStyle = 'rgba(92,70,44,0.62)';
-    ctx.lineWidth = Math.max(3.4, z * 0.52);
+    ctx.lineWidth = Math.max(4.2, z * 0.64);
     for (const [[ax, ay], [bx, by]] of segs) {
       ctx.beginPath();
       ctx.moveTo(ax, ay);

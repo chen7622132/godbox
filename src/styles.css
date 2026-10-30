@@ -666,3 +666,8 @@ input[type="text"]:focus, input[type="number"]:focus { outline: 1px solid var(--
 }
 .epic-line.em { color: #efe6d2; }
 .epic-empty { color: #6b7280; text-align: center; padding: 30px 0; }
+
+#world {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
