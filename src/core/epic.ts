@@ -103,7 +103,12 @@ function pick<T>(arr: T[], seed: number): T {
 
 /** 把事件原文里的事实锚点原样取出，只去掉句号与多余空白 */
 function fact(s: string): string {
-  return s.replace(/。\s*$/, '').replace(/\s+/g, ' ').trim();
+  return s
+    .replace(/。\s*$/, '')
+    .replace(/\s+/g, ' ')
+    // 事件文本里为了分隔常留空格，粘到虚词前面会读成断句（「血牙 的」），这里收掉
+    .replace(/\s+([的地得了是在])/g, '$1')
+    .trim();
 }
 
 /** 事件里的人名/国名，用于纪传体的「谁」 */
