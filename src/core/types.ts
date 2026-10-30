@@ -27,8 +27,13 @@ export const TERRAIN_NAME: string[] = [
 ];
 
 // ============ 时间 ============
-/** 每个 tick 推进的世界年数 */
-export const YEARS_PER_TICK = 2;
+/**
+ * 每 tick 推进多少「世界年」。
+ * 9000 tick 的一局 ≈ 900 年历史 —— 够演 15~20 代王朝，
+ * 又不至于让国王每十秒换一个（那样编年史就变成讣告流水账）。
+ */
+export const YEARS_PER_TICK = 0.1;
+
 /** 每秒模拟 tick 数（与渲染帧率解耦） */
 export const SIM_HZ = 10;
 /** 可选的倍速档 */
@@ -71,7 +76,11 @@ export type EventKind =
   | 'gift'     // 神迹
   | 'extinct'  // 种族灭绝
   | 'unify'    // 统一
-  | 'ruin';    // 城市毁灭
+  | 'ruin'     // 城市毁灭
+  | 'betray'   // 背叛/倒戈
+  | 'revolt'   // 叛乱
+  | 'feud'     // 恩怨
+  | 'legend';  // 传奇（英雄崛起、奇观）
 
 export interface ChronicleEvent {
   year: number;
@@ -81,6 +90,14 @@ export interface ChronicleEvent {
   race: number;
   /** 重要性 0-2，2 = 大事（战争/统一），用于筛选 */
   level: number;
+  /** 主角（人名），用于列传索引 */
+  actor?: string;
+  /** 这条事件的「因」——让编年史读起来有因果链 */
+  cause?: string;
+  /** 一句台词（按情况随机挑） */
+  quote?: string;
+  /** 时代卷号 */
+  era?: number;
 }
 
 // ============ 聚落 ============
@@ -164,9 +181,44 @@ export interface Nation {
   lastCampaign: number;
   /** 当前战争的开始 tick（用于判断战争是否够久） */
   warSince: number;
+
+  // ---- 博弈层（v1.5）----
+  /** 对每个国家的血债，索引 = 对方国家 id，值 = 累计被杀人口 */
+  grudge: number[];
+  /** 国策：决定它这几百年想干什么 */
+  doctrine: Ambition;
+  /** 王朝名（第一个王的名字 + 家族） */
+  dynasty: string;
+  /** 建国以来的战争数 */
+  warCount: number;
+  /** 是否已经分裂过 */
+  fractured: boolean;
 }
 
 // ============ 有名个体 ============
+/** 执念：决定这个君主这一辈子在干什么 */
+export type Ambition = 'conquer' | 'revenge' | 'glory' | 'peace' | 'wealth';
+
+export const AMBITION_NAME: Record<Ambition, string> = {
+  conquer: '一统天下',
+  revenge: '血债血偿',
+  glory: '名垂青史',
+  peace: '守土安民',
+  wealth: '富国强兵',
+};
+
+/** 一条事迹（列传的最小单位） */
+export interface Deed {
+  year: number;
+  text: string;
+  /** 1 = 值得写进列传，2 = 传奇级 */
+  weight: number;
+}
+
+/**
+ * 一个有名有姓的人物。矮人要塞的核心是「历史事件绑定到人」，
+ * 所以这里不是 id 表，而是能被反查一生的档案。
+ */
 export interface Agent {
   id: number;
   name: string;
@@ -179,6 +231,35 @@ export interface Agent {
   /** 个人能力 0.7–1.6 */
   talent: number;
   alive: boolean;
+
+  // ---- 人物档案 ----
+  /** 绰号，由行事作风在中年时获得 */
+  epithet: string;
+  /** 性格标签，直接影响决策倾向 */
+  traits: string[];
+  /** 执念 */
+  ambition: Ambition;
+  /** 父（用于世系与复仇） */
+  father: number | null;
+  /** 被哪个国家所杀（-1 无） */
+  killedBy: number;
+  /** 宿敌（人物 id，-1 无） */
+  nemesis: number;
+  /** 战绩 */
+  warsWon: number;
+  warsLost: number;
+  citiesTaken: number;
+  citiesLost: number;
+  popSlain: number;
+  citiesFounded: number;
+  /** 在位年数 */
+  reign: number;
+  /** 事迹流（列传直接由它拼出来） */
+  deeds: Deed[];
+  /** 死因 */
+  cause: string | null;
+  /** 死于哪一年 */
+  diedYear: number | null;
 }
 
 // ============ 全局统计 ============

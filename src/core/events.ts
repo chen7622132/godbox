@@ -5,14 +5,31 @@ const MAX_EVENTS = 2400;
 /** 一次清理的条数（避免每 tick 都做 O(n) 扫描） */
 const PURGE_BATCH = 400;
 
+export interface LogOpts {
+  actor?: string;
+  cause?: string;
+  quote?: string;
+}
+
 export function logEvent(
   world: World,
   kind: EventKind,
   text: string,
   race = -1,
   level = 0,
+  opts?: LogOpts,
 ): void {
-  const ev: ChronicleEvent = { year: world.year, kind, text, race, level };
+  const ev: ChronicleEvent = {
+    year: Math.round(world.year),
+    kind,
+    text,
+    race,
+    level,
+    era: Math.floor(world.tick / 2200),
+  };
+  if (opts?.actor) ev.actor = opts.actor;
+  if (opts?.cause) ev.cause = opts.cause;
+  if (opts?.quote) ev.quote = opts.quote;
   world.events.push(ev);
 
   if (world.events.length > MAX_EVENTS) {

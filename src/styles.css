@@ -246,6 +246,58 @@ html, body {
 #chronicle-list li.k-gift { border-left-color: #7fd07f; }
 #chronicle-list li.k-ruin { border-left-color: #8a7a5a; }
 
+/* ---- 史书排版：正文 + 因 + 台词 ---- */
+#chronicle-list li .ev-head { display: block; }
+#chronicle-list li .ev-cause {
+  margin: 2px 0 0 0;
+  font-size: 10.5px;
+  color: #7f8a9c;
+  font-style: italic;
+  padding-left: 2px;
+}
+#chronicle-list li .ev-cause::before { content: '⌐ '; opacity: 0.7; }
+#chronicle-list li .ev-quote {
+  margin: 3px 0 1px 0;
+  font-size: 11px;
+  color: #e8d5a8;
+  padding-left: 6px;
+  border-left: 2px solid rgba(232, 213, 168, 0.25);
+  letter-spacing: 0.02em;
+}
+#chronicle-list li.ev-epic {
+  background: linear-gradient(90deg, rgba(255, 212, 71, 0.07), transparent 70%);
+}
+#chronicle-list li.ev-epic .txt { color: #ffe9b0; }
+#chronicle-list li.k-feud { border-left-color: #b04a8a; }
+#chronicle-list li.k-legend { border-left-color: #6fd3c8; }
+
+/* 卷首 */
+#chronicle-list li.vol {
+  margin: 14px 0 6px;
+  padding: 5px 10px;
+  border-left: none;
+  border-top: 1px solid rgba(255, 212, 71, 0.28);
+  border-bottom: 1px solid rgba(255, 212, 71, 0.12);
+  color: var(--gold);
+  font-size: 12px;
+  letter-spacing: 0.24em;
+  text-align: center;
+  font-weight: 600;
+  animation: none;
+}
+/* 卷末史评 */
+#chronicle-list li.vol-comment {
+  margin: 6px 0 10px;
+  padding: 4px 10px;
+  border-left: none;
+  color: #8b94a6;
+  font-size: 10.5px;
+  font-style: italic;
+  text-align: center;
+  animation: none;
+}
+
+
 /* ================= 选中信息 ================= */
 #inspector {
   position: absolute;

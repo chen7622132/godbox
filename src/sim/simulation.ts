@@ -4,10 +4,16 @@ import { logEvent } from '../core/events';
 import {
   T, IS_LAND, YEARS_PER_TICK, TIER_POP, TIER_NAME, TECH_POWER, FOOD,
   type World, type Settlement, type Nation, type Agent, type MoodState, type StatusKind,
+  type Ambition,
 } from '../core/types';
+import { Narrator, grandNum } from '../core/narrative';
 import { findLandNear } from '../core/world';
 
 const rng = new Rng(1);
+const narrator = new Narrator(rng);
+
+/** 五种执念，君主从中抽一个 */
+const AMBITIONS: Ambition[] = ['conquer', 'revenge', 'glory', 'peace', 'wealth'];
 
 /** 一局的目标长度（tick）。15 分钟 × 10 tick/秒 = 9000 */
 export const ROUND_TICKS = 9000;
@@ -144,13 +150,35 @@ function updateMoods(world: World): void {
     if (s.status && world.tick >= s.statusUntil) s.status = null;
 
     // 3) 愤怒 → 发脾气砸房子（房子真的会变破损，俯瞰图上最明显）
-    if (s.mood === 'angry' && rng.next() < 0.018) {
+    if (s.mood === 'angry' && rng.next() < 0.006) {
       s.damage = Math.min(1, s.damage + 0.24);
       setStatus(s, 'tantrum', 120);
       if (s.damage > 0.62 && rng.next() < 0.28) {
-        logEvent(world, 'war', `${s.name} 的民众暴怒，砸毁了自家房屋`, s.race, 2);
+        logEvent(
+          world, 'revolt', `${s.name} 的民众暴怒，砸毁了自家房屋`, s.race, 0,
+          { cause: `粮荒日久，民怨沸腾（主食：${s.foodKind === s.favFood ? '合口' : '不合口'}）` },
+        );
         s.pop = Math.max(1, s.pop * 0.965);
       }
+    }
+
+    // 3.5) 引进新粮 —— 单一种粮的苦日子，是有出路的
+    //      （这是全篇最重要的转折点：一座城从常年暴怒变成有歌声）
+    if (s.foodKind !== s.favFood && s.tier >= 2 && rng.next() < 0.012) {
+      s.foodKind = s.favFood;
+      s.mood = 'happy';
+      s.happiness = 40;
+      s.miseryTicks = 0;
+      setStatus(s, 'sing', 240);
+      logEvent(
+        world, 'legend',
+        `${s.name} 引进了新的作物与渔法，仓廪渐丰。街巷上第一次响起歌声。`,
+        s.race, 2,
+        {
+          actor: s.nation >= 0 ? world.agents[world.nations[s.nation].king]?.name : undefined,
+          cause: `${s.name} 世代只吃一种粮食，直到这一年`,
+        },
+      );
     }
 
     // 4) 房屋缓慢修缮
@@ -161,7 +189,10 @@ function updateMoods(world: World): void {
       const lost = Math.max(1, s.pop * 0.06);
       s.pop = Math.max(1, s.pop - lost);
       s.miseryTicks = 1400;
-      logEvent(world, 'war', `${s.name} 的居民因长期饥苦而大批出走`, s.race, 2);
+      logEvent(
+        world, 'revolt', `${s.name} 的居民因长期饥苦而大批出走`, s.race, 1,
+        { cause: `${s.name} 世代只吃一种粮食，人心早已离散` },
+      );
     }
   }
 }
@@ -181,7 +212,13 @@ export function stepWorld(world: World): void {
   if (world.tick % 5 === 0) updateNations(world);
   if (world.tick % 4 === 0) updateDiplomacy(world);
   if (world.tick % 20 === 0) resolveCampaigns(world);
-  if (world.tick % 2200 === 0) triggerEraEvent(world);
+  if (world.tick % 2200 === 0) {
+    // 卷末：先写史评，再开新卷
+    const eraNo = Math.floor(world.tick / 2200);
+    const count = world.events.filter((e) => e.level >= 1 && (e.era ?? 0) === eraNo - 1).length;
+    logEvent(world, 'legend', narrator.eraComment(count), -1, 2);
+    triggerEraEvent(world);
+  }
   if (world.tick % 30 === 0) updateStats(world);
 
   world.rngState = rng.s;
@@ -450,7 +487,12 @@ function updateNations(world: World): void {
       if (n.techProgress >= 100) {
         n.techProgress = 0;
         n.tech++;
-        logEvent(world, 'tech', `${n.name} 掌握了 ${techName(n.tech)}`, n.race, 1);
+        logEvent(
+          world, 'tech',
+          `${n.name} 步入 ${techName(n.tech)} 时代，工坊里第一次传出新的声音`,
+          n.race, 1,
+          { actor: world.agents[n.king]?.name, cause: `${n.name} 的人口与矿脉足以供养匠人` },
+        );
       }
     }
 
@@ -460,10 +502,16 @@ function updateNations(world: World): void {
       appointKing(world, n);
     } else {
       king.age += YEARS_PER_TICK * 5;
+      king.reign += YEARS_PER_TICK * 5;
       if (king.age > king.lifespan) {
-        king.alive = false;
-        logEvent(world, 'death', `${n.name} 的国王 ${king.name} 去世，享年 ${Math.round(king.age)} 岁`, n.race, 1);
-        appointKing(world, n);
+        // 老死：给他一个说法，而不是一个数字
+        const deathCause = rng.pick([
+          '积劳成疾，崩于王座',
+          '寿终正寝',
+          '夜半无疾而终',
+          '久病不愈，崩',
+        ]);
+        killKing(world, n, king, deathCause, -1);
       }
     }
   }
@@ -532,6 +580,12 @@ function createNation(world: World, race: number, members: Settlement[]): Nation
     peakPop: 0,
     lastCampaign: world.tick,
     warSince: 0,
+
+    grudge: [],
+    doctrine: rng.pick(AMBITIONS),
+    dynasty: '',
+    warCount: 0,
+    fractured: false,
   };
   world.nations.push(n);
   for (const m of members) {
@@ -559,22 +613,68 @@ function stampNation(world: World, sid: number, nid: number): void {
 
 function appointKing(world: World, n: Nation): void {
   const def = raceOf(n.race);
+  const traits = narrator.rollTraits();
+  // 有血债的国家更容易出复仇型君主 —— 仇恨会塑造下一代的性格
+  const grudged = (n.grudge ?? []).some((g) => g > 800);
+  const ambition: Ambition = grudged && rng.chance(0.55)
+    ? 'revenge'
+    : rng.pick(AMBITIONS);
+
+  const fatherId = n.king >= 0 && world.agents[n.king] ? n.king : null;
+  const startAge = rng.intRange(18, 40);
   const a: Agent = {
     id: world.agents.length,
     name: makePersonName(rng, n.race),
     race: n.race,
     nation: n.id,
     role: 'king',
-    born: world.year,
-    age: rng.intRange(18, 40),
+    born: Math.round(world.year - startAge),
+    age: startAge,
     lifespan: Math.round(def.lifespan * (0.8 + rng.next() * 0.5)),
     talent: 0.75 + rng.next() * 0.85,
     alive: true,
+
+    epithet: '',
+    traits,
+    ambition,
+    father: fatherId,
+    killedBy: -1,
+    nemesis: -1,
+    warsWon: 0,
+    warsLost: 0,
+    citiesTaken: 0,
+    citiesLost: 0,
+    popSlain: 0,
+    citiesFounded: 0,
+    reign: 0,
+    deeds: [],
+    cause: null,
+    diedYear: null,
   };
   world.agents.push(a);
   n.king = a.id;
-  if (world.agents.filter((x) => x.nation === n.id).length > 1) {
-    logEvent(world, 'coronate', `${a.name} 继位为 ${n.name} 之王`, n.race, 1);
+  if (!n.dynasty) n.dynasty = a.name;
+  a.deeds.push({
+    year: Math.round(world.year),
+    text: fatherId !== null ? `继父之位，为 ${n.name} 之主` : `立为 ${n.name} 之主，开 ${a.name} 之朝`,
+    weight: 1,
+  });
+
+  if (fatherId !== null) {
+    const father = world.agents[fatherId];
+    const fatherName = father?.name ?? null;
+    if (fatherName) {
+      logEvent(
+        world, 'coronate',
+        narrator.coronationText(a.name, n.name, fatherName),
+        n.race, 1,
+        { actor: a.name, quote: narrator.heirQuote(), cause: `先王 ${fatherName} 崩` },
+      );
+      // 子承父仇：父亲是被谁杀的，这儿子一上台就记着
+      if (father && father.ambition === 'revenge' && father.killedBy >= 0) {
+        n.grudge[father.killedBy] = (n.grudge[father.killedBy] ?? 0) + 400;
+      }
+    }
   }
 }
 
@@ -589,6 +689,26 @@ function nationCenter(world: World, n: Nation): { x: number; y: number } {
   return c > 0 ? { x: x / c, y: y / c } : { x: -1, y: -1 };
 }
 
+/** 好战的性格标签 / 克制的性格标签 */
+const HAWK_TRAITS = ['嗜血', '好战', '残暴', '狂傲', '刚愎'];
+const DOVE_TRAITS = ['仁厚', '谨慎', '重诺'];
+
+/**
+ * 君主性格对宣战概率的放大/抑制。
+ * 这一条让「同样两个国家，换个国王，历史就完全不同」——
+ * 性格不是装饰，是因果。
+ */
+function warlike(world: World, n: Nation): number {
+  const k = world.agents[n.king];
+  if (!k || !k.alive) return 1;
+  let f = 1;
+  if (k.traits.some((t) => HAWK_TRAITS.includes(t))) f *= 1.7;
+  if (k.traits.some((t) => DOVE_TRAITS.includes(t))) f *= 0.5;
+  if (k.ambition === 'conquer' || k.ambition === 'revenge') f *= 1.5;
+  if (k.ambition === 'peace') f *= 0.55;
+  return f;
+}
+
 function updateDiplomacy(world: World): void {
   const alive = world.nations.filter((n) => n.alive);
   for (let i = 0; i < alive.length; i++) {
@@ -597,7 +717,7 @@ function updateDiplomacy(world: World): void {
       if (a.enemies.includes(b.id)) continue;
       if (a.cities.length < 3 || b.cities.length < 3) continue;
       // 新生的国家需要时间巩固内部，不会立刻发动战争
-      if (world.year - a.founded < 900 || world.year - b.founded < 900) continue;
+      if (world.year - a.founded < 45 || world.year - b.founded < 45) continue;
 
       const ca = nationCenter(world, a);
       const cb = nationCenter(world, b);
@@ -608,7 +728,8 @@ function updateDiplomacy(world: World): void {
       if (sameRace && a.tech < 4) continue;
 
       const base = sameRace ? 0.0015 : 0.009;
-      const p = base * (a.aggression + b.aggression);
+      // 性格真的会改变历史：好战之君把国家拖进战争，仁厚之君守住太平
+      const p = base * (a.aggression + b.aggression) * warlike(world, a) * warlike(world, b);
       if (rng.chance(p)) declareWar(world, a, b);
     }
   }
@@ -618,7 +739,7 @@ function updateDiplomacy(world: World): void {
   for (const n of alive) {
     if (n.cities.length < 4 || n.cities.length < totalCities * 0.5) continue;
     // 新生的强权还没形成威胁感，同盟不会立刻成立
-    if (world.year - n.founded < 2000) continue;
+    if (world.year - n.founded < 100) continue;
     const coalition = alive.filter(
       (o) => o.id !== n.id && !o.enemies.includes(n.id) && o.enemies.length < 2,
     );
@@ -650,14 +771,42 @@ function updateDiplomacy(world: World): void {
 function declareWar(world: World, a: Nation, b: Nation): void {
   a.enemies.push(b.id);
   b.enemies.push(a.id);
+  a.warCount++;
+  b.warCount++;
   world.stats.warsDeclared++;
-  const ka = world.agents[a.king]?.name ?? '王';
-  const kb = world.agents[b.king]?.name ?? '王';
-  logEvent(
-    world, 'war',
-    `${a.name}（${ka}）向 ${b.name}（${kb}）宣战！`,
-    a.race, 2,
-  );
+  a.warSince = world.tick;
+
+  const ka = world.agents[a.king];
+  const kb = world.agents[b.king];
+  const nameA = ka?.name ?? '王';
+  const nameB = kb?.name ?? '王';
+  const grudge = (a.grudge[b.id] ?? 0) + (b.grudge[a.id] ?? 0);
+
+  if (grudge > 600 && ka) {
+    // 复仇战争：不是随机宣战，是二十年前那笔血债到期了
+    logEvent(
+      world, 'war',
+      narrator.revengeText(nameA, a.name, b.name, grudge),
+      a.race, 2,
+      {
+        actor: nameA,
+        quote: '「血债不偿，我死不瞑目。」',
+        cause: `${b.name} 欠下 ${grandNum(grudge)} 条人命`,
+      },
+    );
+    ka.ambition = 'revenge';
+    a.grudge[b.id] = 0; // 一次清算
+    ka.deeds.push({ year: Math.round(world.year), text: `为 ${grandNum(grudge)} 条人命，举兵伐 ${b.name}`, weight: 2 });
+  } else {
+    const reason = narrator.warReason(ka?.traits ?? ['好战']);
+    logEvent(
+      world, 'war',
+      narrator.warText(a.name, nameA, b.name, nameB, reason),
+      a.race, 2,
+      { actor: nameA, quote: narrator.warQuote(ka?.traits), cause: reason },
+    );
+    if (ka) ka.deeds.push({ year: Math.round(world.year), text: `伐 ${b.name}`, weight: 1 });
+  }
 }
 
 // ============ 战役 ============
@@ -726,6 +875,8 @@ function resolveCampaigns(world: World): void {
 
       if (atk > defense) {
         conquer(world, a, b, target, ka);
+        const ak = world.agents[a.king];
+        if (ak) ak.warsWon++;
       } else {
         // 攻方受挫
         for (const id of a.cities) {
@@ -733,10 +884,20 @@ function resolveCampaigns(world: World): void {
           if (s && s.alive) s.pop *= 0.945;
         }
         a.warsLost++;
+        const ak = world.agents[a.king];
+        if (ak) {
+          ak.warsLost++;
+          ak.deeds.push({
+            year: Math.round(world.year),
+            text: `攻 ${target.name} 不克，${narrator.defeatReaction()}`,
+            weight: 1,
+          });
+        }
         logEvent(
           world, 'battle',
-          `${target.name} 城下，${b.name} 守军击退 ${a.name} 的进攻（${kb} 对 ${ka}）`,
-          b.race, 1,
+          narrator.defenseText(kb, b.name, ka, a.name, target.name),
+          b.race, 0,
+          { actor: kb, quote: narrator.defeatQuote(), cause: `${b.name} 城坚，攻之不克` },
         );
       }
 
@@ -744,14 +905,65 @@ function resolveCampaigns(world: World): void {
       if (rng.chance(0.006)) {
         const king = world.agents[a.king];
         if (king && king.alive) {
-          king.alive = false;
-          logEvent(world, 'death', `${a.name} 之王 ${king.name} 战死沙场`, a.race, 2);
-          appointKing(world, a);
+          killKing(world, a, king, `战死于 ${target.name} 城下`, b.id);
         }
       }
       break; // 每轮只打一场
     }
   }
+}
+
+/**
+ * 一位君主的死。这是编年史最有分量的一个事件：
+ * 要把死因、遗言、以及「这笔账记在谁头上」一次写清。
+ */
+function killKing(world: World, n: Nation, k: Agent, cause: string, killerNation: number): void {
+  k.alive = false;
+  k.diedYear = Math.round(world.year);
+  k.cause = cause;
+  k.killedBy = killerNation;
+  if (!k.epithet) k.epithet = narrator.epithet(k.traits, k);
+  k.deeds.push({ year: Math.round(world.year), text: cause, weight: 2 });
+
+  // 太平年也要写一笔 —— 否则列传里只剩打仗的人
+  if (k.warsWon + k.warsLost === 0 && k.reign > 20) {
+    k.deeds.push({
+      year: Math.round(world.year),
+      text: `在位 ${Math.round(k.reign)} 载，未动刀兵，境内称安`,
+      weight: 1,
+    });
+  }
+  if (k.citiesTaken > 0 && !k.epithet) {
+    k.deeds.push({
+      year: Math.round(world.year),
+      text: `一生拔城 ${k.citiesTaken} 座`,
+      weight: 1,
+    });
+  }
+
+  logEvent(
+    world, 'death',
+    narrator.deathText(k.name, k.age, cause, k.epithet),
+    n.race,
+    // 只有真正干过事的人，死了才值得进「重要事件」
+    k.warsWon + k.citiesTaken + k.popSlain / 500 >= 1 ? 2 : 1,
+    { actor: k.name, quote: narrator.deathQuote(k.traits), cause },
+  );
+
+  // 血债入账：下一位君主会记得这笔账
+  if (killerNation >= 0) {
+    n.grudge[killerNation] = (n.grudge[killerNation] ?? 0) + 1200;
+    const kn = world.nations[killerNation];
+    if (kn) {
+      logEvent(
+        world, 'feud',
+        narrator.feudText(n.name, kn.name, 1200),
+        n.race, 1,
+        { actor: k.name, cause: `${k.name} 死于 ${kn.name} 之手` },
+      );
+    }
+  }
+  appointKing(world, n);
 }
 
 function conquer(world: World, a: Nation, b: Nation, target: Settlement, attackerName: string): void {
@@ -785,10 +997,28 @@ function conquer(world: World, a: Nation, b: Nation, target: Settlement, attacke
   }
   a.techProgress += 8;
 
+  // 血债入账：被杀的人不会白死，这笔账会变成二十年后的战争
+  b.grudge[a.id] = (b.grudge[a.id] ?? 0) + lost;
+  const ak = world.agents[a.king];
+  if (ak) {
+    ak.citiesTaken++;
+    ak.popSlain += lost;
+    ak.deeds.push({
+      year: Math.round(world.year),
+      text: `拔 ${target.name}，屠 ${grandNum(lost)}`,
+      weight: target.pop > 120 ? 2 : 1,
+    });
+  }
+
   logEvent(
     world, 'conquer',
-    `${a.name} 攻陷 ${b.name} 的 ${target.name}，屠戮 ${lost} 人（${attackerName} 亲征）`,
+    narrator.conquerText(attackerName, a.name, target.name, lost),
     a.race, 2,
+    {
+      actor: attackerName,
+      quote: narrator.victoryQuote(ak?.traits),
+      cause: `${target.name} 守军不敌`,
+    },
   );
 
   // 首都被占 → 迁都；无城 → 灭国
@@ -941,7 +1171,7 @@ function updateStats(world: World): void {
       logEvent(world, 'unify', `${only.name} 统一了已知世界，${only.name}的时代开始了`, only.race, 2);
     }
   }
-  if (cities.length === 0 && world.year > 50) {
+  if (cities.length === 0 && world.year > 12) {
     world.ended = true;
     world.endReason = '世界陷入死寂，再无文明';
   }

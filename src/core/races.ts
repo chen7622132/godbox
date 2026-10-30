@@ -130,7 +130,7 @@ export const RACES: RaceDef[] = [
     growth: 1.18,
     power: 1.22,
     tech: 0.65,
-    lifespan: 40,
+    lifespan: 55,
     aggression: 0.68,
     harshness: 1.2,
     traits: ['繁殖极快、寿命很短', '丢城之后人口反而反弹', '侵略性最高'],
@@ -151,7 +151,11 @@ export function raceOf(id: number): RaceDef {
   return RACES[id] ?? RACES[0];
 }
 
-/** 生成人名：人类/精灵用「姓+名」，矮人/兽人用双字名 */
+/**
+ * 生成人名：人类/精灵用「姓+名」，矮人/兽人用双字名。
+ * 双字名要防「血血」「狂狂」这种叠字 —— 人名是整个叙事的地基，
+ * 一个出戏的名字会让整段编年史塌掉。
+ */
 export function makePersonName(
   rng: { pick: <X>(a: readonly X[]) => X },
   race: number,
@@ -160,5 +164,8 @@ export function makePersonName(
   if (race === 0 || race === 1) {
     return rng.pick(r.family) + rng.pick(r.given);
   }
-  return rng.pick(r.given) + rng.pick(r.given);
+  const a = rng.pick(r.given);
+  let b = rng.pick(r.given);
+  for (let i = 0; i < 10 && b === a; i++) b = rng.pick(r.given);
+  return a + b;
 }

@@ -119,6 +119,45 @@ export function deserialize(blob: unknown): World {
   if (world.stats.popHistory.length > 400) {
     world.stats.popHistory = world.stats.popHistory.slice(-400);
   }
+
+  // ---- 旧存档兼容：v1.5 新增的人物/博弈字段，缺了就补默认值 ----
+  for (const s of world.settlements) {
+    if (s.mood === undefined) {
+      s.mood = 'normal';
+      s.happiness = 0;
+      s.foodKind = s.favFood ?? 0;
+      s.lastMeal = world.tick;
+      s.status = null;
+      s.statusUntil = 0;
+      s.miseryTicks = 0;
+      s.damage = 0;
+    }
+  }
+  for (const n of world.nations) {
+    if (!n.grudge) n.grudge = [];
+    if (!n.doctrine) n.doctrine = 'conquer';
+    if (!n.dynasty) n.dynasty = '';
+    if (n.warCount === undefined) n.warCount = 0;
+    if (n.fractured === undefined) n.fractured = false;
+  }
+  for (const a of world.agents) {
+    if (a.traits === undefined) a.traits = ['好战', '谨慎'];
+    if (!a.ambition) a.ambition = 'glory';
+    if (a.epithet === undefined) a.epithet = '';
+    if (a.father === undefined) a.father = null;
+    if (a.killedBy === undefined) a.killedBy = -1;
+    if (a.nemesis === undefined) a.nemesis = -1;
+    if (a.warsWon === undefined) a.warsWon = 0;
+    if (a.warsLost === undefined) a.warsLost = 0;
+    if (a.citiesTaken === undefined) a.citiesTaken = 0;
+    if (a.citiesLost === undefined) a.citiesLost = 0;
+    if (a.popSlain === undefined) a.popSlain = 0;
+    if (a.citiesFounded === undefined) a.citiesFounded = 0;
+    if (a.reign === undefined) a.reign = 0;
+    if (!a.deeds) a.deeds = [];
+    if (a.cause === undefined) a.cause = null;
+    if (a.diedYear === undefined) a.diedYear = null;
+  }
   return world;
 }
 
