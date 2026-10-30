@@ -300,8 +300,10 @@ export class Renderer {
         const f = fert[i];
 
         // WorldBox 是「平色块」：只保留极轻微的大尺度变化，不做每格颗粒
-        const low = vnoise(x * 0.055, y * 0.055, 3);
-        let base = 0.95 + (low - 0.5) * 0.09;
+        // 跨格的大色斑：让地面有「块」的感觉，而不是一格一格拼出来的
+        const low = vnoise(x * 0.075, y * 0.075, 3);
+        const mid = vnoise(x * 0.21, y * 0.21, 17);
+        let base = 0.94 + (low - 0.5) * 0.17 + (mid - 0.5) * 0.06;
 
         if (IS_LAND[t] && t !== T.Snow) {
           base *= 0.94 + (f / 255) * 0.12;
@@ -403,15 +405,15 @@ export class Renderer {
 
             if (drawEdge && (py < ew || px < ew)) {
               // 上/左：亮边 —— 光从左上来，方块「凸起」
-              cr = (br * 0.48 + ep[0] * 0.52) * s;
-              cg = (bg * 0.48 + ep[1] * 0.52) * s;
-              cb = (bb * 0.48 + ep[2] * 0.52) * s;
+              cr = (br * 0.62 + ep[0] * 0.38) * s;
+              cg = (bg * 0.62 + ep[1] * 0.38) * s;
+              cb = (bb * 0.62 + ep[2] * 0.38) * s;
             } else if (drawEdge && (py >= T2 - ew || px >= T2 - ew)) {
               // 下/右：仍是亮边，但只混 20% —— WorldBox 是「底色+浅色内边」，
               // 不用暗边，否则相邻格子的亮暗边会拼成一张深色渔网
-              cr = (br * 0.80 + ep[0] * 0.20) * s;
-              cg = (bg * 0.80 + ep[1] * 0.20) * s;
-              cb = (bb * 0.80 + ep[2] * 0.20) * s;
+              cr = (br * 0.88 + ep[0] * 0.12) * s;
+              cg = (bg * 0.88 + ep[1] * 0.12) * s;
+              cb = (bb * 0.88 + ep[2] * 0.12) * s;
             } else {
               cr = br * s;
               cg = bg * s;
@@ -593,7 +595,7 @@ export class Renderer {
       const look = RACE_LOOK[u.race] ?? RACE_LOOK[0];
       const kid = u.job === 'child';
       // 人约房子的 1/3 高：再小就看不见脸，再大就不像城
-      const H = Math.max(5, Math.min(30, Math.round(z * (kid ? 0.24 : 0.42) * look.h)));
+      const H = Math.max(5, Math.min(24, Math.round(z * (kid ? 0.18 : 0.3) * look.h)));
       const W = Math.max(3, Math.round(H * 0.56 * look.w));
       paintUnit(ctx, sx, sy, H, W, u, look, now);
     }
@@ -1066,10 +1068,11 @@ export class Renderer {
         if (!per) continue;
         for (let k = 0; k < per; k++) {
           const b = list[k];
+          // 角度和半径都要大幅抖动，否则房子会排成一个整齐的圆环 —— 那是最像「程序生成」的破绽
           const a = (k / per) * Math.PI * 2
             + (ring === 0 ? Math.PI / 4 : Math.PI / 7)
-            + h2(seed + (ring ? 500 : 0), k) * 0.34;
-          const rr = spread * (ring === 0 ? 0.42 : 1) * (0.9 + h2(seed + 41 + (ring ? 500 : 0), k) * 0.2);
+            + (h2(seed + (ring ? 500 : 0), k) - 0.5) * 1.15;
+          const rr = spread * (ring === 0 ? 0.46 : 1) * (0.72 + h2(seed + 41 + (ring ? 500 : 0), k) * 0.58);
           spots.push({
             kind: b.kind,
             x: sx + Math.cos(a) * rr,
@@ -1381,15 +1384,15 @@ export class Renderer {
       if (z >= 5) {
         const mood = s.mood ?? 'normal';
         const st = s.status;
+        // 只在「情绪刚发生变化」的那一小段时间显示图标。
+        // 原来按 mood 常驻，结果每座城头顶都挂一个方块，画面全是 UI 噪音。
+        void mood;
         const icon = st === 'sing' ? 'note'
           : st === 'laugh' ? 'laugh'
           : st === 'curse' ? 'hash'
           : st === 'cry' ? 'drop'
           : st === 'tantrum' ? 'rage'
           : st === 'love' ? 'heart'
-          : mood === 'happy' ? 'note'
-          : mood === 'sad' ? 'drop'
-          : mood === 'angry' ? 'rage'
           : null;
         if (icon) {
           const d = Math.max(6, Math.round(z * 0.8));
@@ -1397,18 +1400,19 @@ export class Renderer {
         }
       }
 
-      // 人口数字
-      if (z >= 16) {
+      // 人口数字：只在放得很大时出现，而且要「弱」——
+      // 标签一旦喧宾夺主，画面就从世界变成了仪表盘
+      if (z >= 40) {
         const label = String(Math.round(s.pop));
-        ctx.font = `bold ${Math.max(8, Math.round(z * 0.5))}px ui-monospace, monospace`;
+        ctx.font = `${Math.max(9, Math.round(z * 0.26))}px ui-monospace, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        const ty = sy - unit * 1.5;
-        ctx.lineWidth = Math.max(2, z * 0.16);
+        const ty = sy - unit * 1.35;
+        ctx.lineWidth = Math.max(2, z * 0.08);
         ctx.lineJoin = 'round';
-        ctx.strokeStyle = 'rgba(4,7,11,0.88)';
+        ctx.strokeStyle = 'rgba(8,10,14,0.45)';
         ctx.strokeText(label, sx, ty);
-        ctx.fillStyle = '#ffeeb0';
+        ctx.fillStyle = 'rgba(240,232,208,0.72)';
         ctx.fillText(label, sx, ty);
       }
 
@@ -1842,9 +1846,11 @@ export function paintStruct(
     const wallH = Math.max(2, y0 + bh - eave);
     const ridge = y0 + Math.round(bh * 0.04);
 
-    // 落地影
-    ctx.fillStyle = 'rgba(0,0,0,0.30)';
-    ctx.fillRect(x0 + 1, y0 + bh - 1, bw + 1, Math.max(2, Math.round(bh * 0.13)));
+    // 落地影：光源固定在左上，所以影子一律落在右下。
+    // 阴影方向统一，是「同一个世界」和「一堆贴图」的分界线
+    ctx.fillStyle = 'rgba(0,0,0,0.26)';
+    ctx.fillRect(x0 + 3, y0 + bh, bw, Math.max(2, Math.round(bh * 0.1)));
+    ctx.fillRect(x0 + bw, y0 + Math.max(1, Math.round(bh * 0.2)), 2, Math.round(bh * 0.78));
 
     if (o.roofType === 'tree') {
       // ---------- 精灵：树屋 ----------
