@@ -57,7 +57,7 @@ export function populateCity(world: World, sid: number): void {
   for (let i = have; i < want; i++) {
     const job = pickJob(rng);
     const a = rng.next() * Math.PI * 2;
-    const r = 0.5 + rng.next() * 2.2;
+    const r = 0.5 + rng.next() * 3.8;
     world.units.push({
       id: world.units.length,
       race: s.race,

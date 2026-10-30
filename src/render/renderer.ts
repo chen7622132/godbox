@@ -50,7 +50,7 @@ const FIRE_HOT: [number, number, number] = [255, 240, 170];
 const PLAGUE: [number, number, number] = [146, 62, 154];
 
 /** 缩放档位：必须是细节像素数的整数倍 */
-const ZOOM_STEPS = [1, 2, 3, 4, 8, 12, 16, 20, 24, 32];
+const ZOOM_STEPS = [1, 2, 3, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64];
 const ZOOM_MAX = 32;
 
 function h2(x: number, y: number): number {
@@ -576,7 +576,8 @@ export class Renderer {
       const kid = u.job === 'child';
       // 小人始终保持在 7~32px：太小看不见，太大盖住房子
       // 单位约半格高：既能看清头身，又不至于盖住房子
-      const H = Math.max(6, Math.min(26, Math.round(z * (kid ? 0.34 : 0.55) * look.h)));
+      // 人约房子的 1/4 高 —— 这个比例决定「城」看起来有多大
+      const H = Math.max(5, Math.min(18, Math.round(z * (kid ? 0.14 : 0.22) * look.h)));
       const W = Math.max(4, Math.round(H * 0.58 * look.w));
 
       // 二头身：头占三分之一，这是 WorldBox 好认的关键
@@ -1058,33 +1059,83 @@ export class Renderer {
 
       // 城墙
       if (s.walls > 0) {
-        const half = unit * 1.75;
-        const thick = Math.max(2, unit * 0.2);
-        ctx.fillStyle = '#726a55';
+        const half = unit * 2.05;
+        const thick = Math.max(3, Math.round(unit * 0.24));
+        const stone = s.walls >= 2 ? '#8c8878' : '#7a7462';
+        const stoneLit = s.walls >= 2 ? '#a8a496' : '#948d78';
+
+        // 落地投影（墙是立起来的，必须有影子）
+        ctx.fillStyle = 'rgba(0,0,0,0.26)';
+        ctx.fillRect(sx - half + 2, sy + half - 2, half * 2, thick * 0.7);
+
+        // 四面墙
+        ctx.fillStyle = stone;
         ctx.fillRect(sx - half, sy - half, half * 2, thick);
         ctx.fillRect(sx - half, sy + half - thick, half * 2, thick);
         ctx.fillRect(sx - half, sy - half, thick, half * 2);
         ctx.fillRect(sx + half - thick, sy - half, thick, half * 2);
-        ctx.fillStyle = '#8b826a';
-        for (let k = 0; k < 5; k++) {
-          const tx = sx - half + (half * 2 * (k + 0.5)) / 5 - thick * 0.3;
-          ctx.fillRect(tx, sy - half - thick * 0.4, thick * 0.6, thick * 0.5);
-          ctx.fillRect(tx, sy + half - thick * 0.1, thick * 0.6, thick * 0.5);
+        // 墙顶受光
+        ctx.fillStyle = stoneLit;
+        ctx.fillRect(sx - half, sy - half, half * 2, Math.max(1, thick * 0.34));
+        ctx.fillRect(sx - half, sy - half, Math.max(1, thick * 0.34), half * 2);
+        // 石缝
+        ctx.fillStyle = 'rgba(30,28,22,0.24)';
+        for (let k = 1; k < 6; k++) {
+          const seg = (half * 2 * k) / 6;
+          ctx.fillRect(sx - half + seg, sy - half, 1, thick);
+          ctx.fillRect(sx - half + seg, sy + half - thick, 1, thick);
+          ctx.fillRect(sx - half, sy - half + seg, thick, 1);
+          ctx.fillRect(sx + half - thick, sy - half + seg, thick, 1);
         }
-        const gate = Math.max(3, unit * 0.4);
-        ctx.fillStyle = '#443b2b';
+
+        // 垛口（城墙上一个个凸起）
+        const merlon = Math.max(2, Math.round(thick * 0.7));
+        ctx.fillStyle = stoneLit;
+        const perSide = Math.max(4, Math.round(half / unit));
+        for (let k = 0; k < perSide; k++) {
+          const t = (k + 0.5) / perSide;
+          const mx = Math.round(sx - half + half * 2 * t - merlon / 2);
+          ctx.fillRect(mx, Math.round(sy - half - merlon * 0.5), merlon, merlon);
+          ctx.fillRect(mx, Math.round(sy + half - thick + merlon * 0.5), merlon, merlon);
+        }
+        for (let k = 0; k < perSide; k++) {
+          const t = (k + 0.5) / perSide;
+          const my = Math.round(sy - half + half * 2 * t - merlon / 2);
+          ctx.fillRect(Math.round(sx - half - merlon * 0.5), my, merlon, merlon);
+          ctx.fillRect(Math.round(sx + half - thick + merlon * 0.5), my, merlon, merlon);
+        }
+
+        // 城门：门洞 + 门楼
+        const gate = Math.max(4, Math.round(unit * 0.5));
+        ctx.fillStyle = '#2e2418';
         ctx.fillRect(sx - gate / 2, sy + half - thick - 1, gate, thick + 2);
-        if (s.walls >= 2) {
-          const tw = Math.max(3, unit * 0.32);
-          ctx.fillStyle = '#5e5643';
-          for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-            ctx.fillRect(sx + dx * half - tw / 2, sy + dy * half - tw / 2, tw, tw);
-          }
+        ctx.fillStyle = '#4a3a24';
+        ctx.fillRect(sx - gate / 2 + 1, sy + half - thick, gate - 2, thick);
+        // 门楼（比墙高）
+        const gh = Math.round(unit * 0.55);
+        ctx.fillStyle = stone;
+        ctx.fillRect(sx - gate * 0.9, sy + half - thick - gh, gate * 1.8, gh);
+        ctx.fillStyle = stoneLit;
+        ctx.fillRect(sx - gate * 0.9, sy + half - thick - gh, gate * 1.8, Math.max(1, gh * 0.28));
+        ctx.fillStyle = '#2e2418';
+        ctx.fillRect(sx - gate / 2, sy + half - thick - gh * 0.7, gate, gh * 0.7);
+
+        // 角楼
+        const tw = Math.max(4, Math.round(unit * 0.45));
+        for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          const tx = sx + dx * half - tw / 2;
+          const ty = sy + dy * half - tw / 2;
+          ctx.fillStyle = 'rgba(0,0,0,0.22)';
+          ctx.fillRect(tx + 2, ty + 2, tw, tw);
+          ctx.fillStyle = s.walls >= 2 ? '#6e6a5c' : '#5e5643';
+          ctx.fillRect(tx, ty, tw, tw);
+          ctx.fillStyle = stoneLit;
+          ctx.fillRect(tx, ty, tw, Math.max(1, tw * 0.3));
         }
       }
 
-      // ---- 建筑群：按功能分区，而不是一排同样的房子 ----
-      const spread = unit * (s.walls > 0 ? 1.2 : 1.4);
+      // ---- 建筑群：先算位置 → 铺道路 → 再盖房子 ----
+      const spread = unit * (s.walls > 0 ? 1.5 : 1.75);
       const roof = shade(race.rgb, 0.98);
       const roofDark = shade(race.rgb, 0.6);
       const seed = s.id * 7919 + 13;
@@ -1102,12 +1153,6 @@ export class Renderer {
       ctx.beginPath();
       ctx.ellipse(sx, sy, gR * 0.72, gR * 0.54, 0, 0, Math.PI * 2);
       ctx.fill();
-      // 广场（中心一小块石板）
-      if (s.tier >= 1) {
-        ctx.fillStyle = 'rgba(150,148,140,0.62)';
-        const pz = unit * 0.5;
-        ctx.fillRect(Math.round(sx - pz), Math.round(sy - pz * 0.7), Math.round(pz * 2), Math.round(pz * 1.4));
-      }
 
       type BKind = 'house' | 'workshop' | 'granary' | 'barracks' | 'temple' | 'tower';
       const plan: { kind: BKind; ring: number }[] = [];
@@ -1119,10 +1164,10 @@ export class Renderer {
       if (s.tier >= 3) plan.push({ kind: 'barracks', ring: 1 });
       if (s.tier >= 3) plan.push({ kind: 'tower', ring: 1 });
 
-      // 记录每个建筑的位置，供破损逻辑复用
-      const placed: { x: number; y: number; w: number; h: number }[] = [];
+      type Spot = { kind: BKind; x: number; y: number; j: number };
+      const spots: Spot[] = [];
       for (const ring of [0, 1]) {
-        const list = plan.filter((p) => p.ring === ring);
+        const list = plan.filter((q) => q.ring === ring);
         const per = list.length;
         if (!per) continue;
         for (let k = 0; k < per; k++) {
@@ -1131,51 +1176,109 @@ export class Renderer {
             + (ring === 0 ? Math.PI / 4 : Math.PI / 7)
             + h2(seed + (ring ? 500 : 0), k) * 0.34;
           const rr = spread * (ring === 0 ? 0.42 : 1) * (0.9 + h2(seed + 41 + (ring ? 500 : 0), k) * 0.2);
-          const bx = sx + Math.cos(a) * rr;
-          const by = sy + Math.sin(a) * rr * 0.7;
-          // 每栋房子略有大小差：城市才不像贴图阵列
-          const jitter = 0.9 + h2(seed + 900 + plan.length, k + ring * 20) * 0.22;
-
-          if (b.kind === 'house') {
-            this.drawHouse(bx, by, unit * 0.72 * jitter, unit * 0.7 * jitter, roof, roofDark, k % 3 === 0, true, s.race);
-            placed.push({ x: bx, y: by, w: unit * 0.72 * jitter, h: unit * 0.7 * jitter });
-          } else if (b.kind === 'workshop') {
-            this.drawStruct(bx, by, unit * 0.8, unit * 0.72, {
-              race: s.race, wall: wallDim, roof, roofDark,
-              roofType: s.race === 1 ? 'tree' : s.race === 2 ? 'flat' : 'gable',
-              addon: s.race === 2 ? 'chimney' : 'goods', lit: true,
-            });
-            placed.push({ x: bx, y: by, w: unit * 0.8, h: unit * 0.72 });
-          } else if (b.kind === 'granary') {
-            this.drawStruct(bx, by, unit * 0.7, unit * 0.82, {
-              race: s.race, wall: wallLit, roof: shade([214, 178, 92], 1), roofDark: shade([170, 138, 66], 1),
-              roofType: 'dome', addon: 'goods', lit: false,
-            });
-            placed.push({ x: bx, y: by, w: unit * 0.7, h: unit * 0.82 });
-          } else if (b.kind === 'temple') {
-            this.drawStruct(bx, by, unit * 0.86, unit * 1.02, {
-              race: s.race, wall: wallLit, roof: '#e8e2cc', roofDark: '#b8b09a',
-              roofType: s.race === 2 ? 'flat' : 'spire',
-              addon: s.race === 3 ? 'horns' : 'cross', lit: true,
-            });
-            placed.push({ x: bx, y: by, w: unit * 0.86, h: unit * 1.02 });
-          } else if (b.kind === 'barracks') {
-            this.drawStruct(bx, by, unit * 0.92, unit * 0.78, {
-              race: s.race, wall: wallDim, roof: roofDark, roofDark: shade(race.rgb, 0.42),
-              roofType: s.race === 1 ? 'tree' : s.race === 2 ? 'flat' : 'gable',
-              addon: 'shield', lit: true,
-            });
-            placed.push({ x: bx, y: by, w: unit * 0.92, h: unit * 0.78 });
-          } else {
-            // tower
-            this.drawStruct(bx, by, unit * 0.54, unit * 1.2, {
-              race: s.race, wall: wallLit, roof: roof, roofDark,
-              roofType: 'flat', addon: 'banner', lit: true,
-            });
-            placed.push({ x: bx, y: by, w: unit * 0.54, h: unit * 1.2 });
-          }
+          spots.push({
+            kind: b.kind,
+            x: sx + Math.cos(a) * rr,
+            y: sy + Math.sin(a) * rr * 0.7,
+            j: 0.9 + h2(seed + 900 + plan.length, k + ring * 20) * 0.22,
+          });
         }
       }
+
+      // 街道：从中心广场向每栋建筑铺一条土路
+      {
+        const roadW = Math.max(2, Math.round(unit * (s.tier >= 2 ? 0.1 : 0.08)));
+        ctx.lineCap = 'round';
+        // 先铺深色路基，再压亮色路面 —— 否则路会陷进土色地面里看不见
+        ctx.strokeStyle = 'rgba(104,80,52,0.55)';
+        ctx.lineWidth = roadW * 1.5;
+        for (const sp of spots) {
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(sp.x, sp.y);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = 'rgba(222,200,146,0.92)';
+        ctx.lineWidth = roadW;
+        for (const sp of spots) {
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(sp.x, sp.y);
+          ctx.stroke();
+        }
+        // 外环再连一圈，形成环城路
+        if (spots.length > 3) {
+          ctx.strokeStyle = 'rgba(196,168,124,0.4)';
+          ctx.lineWidth = Math.max(1, roadW - 1);
+          ctx.beginPath();
+          let first = true;
+          for (const sp of spots) {
+            if (first) { ctx.moveTo(sp.x, sp.y); first = false; }
+            else ctx.lineTo(sp.x, sp.y);
+          }
+          ctx.stroke();
+        }
+        ctx.lineCap = 'butt';
+      }
+
+      // 广场
+      if (s.tier >= 1) {
+        ctx.fillStyle = 'rgba(158,152,142,0.7)';
+        const pz = unit * 0.42;
+        ctx.fillRect(Math.round(sx - pz), Math.round(sy - pz * 0.7), Math.round(pz * 2), Math.round(pz * 1.4));
+        ctx.fillStyle = 'rgba(178,172,160,0.5)';
+        ctx.fillRect(Math.round(sx - pz * 0.7), Math.round(sy - pz * 0.48), Math.round(pz * 1.4), Math.round(pz * 0.96));
+      }
+
+      const placed: { x: number; y: number; w: number; h: number }[] = [];
+      for (const sp of spots) {
+        const bx = sp.x;
+        const by = sp.y;
+        const jit = sp.j;
+        // 每栋房子的屋顶深浅略不同，避免整片一样
+        const rv = 0.9 + h2(seed + 77, Math.round(bx * 13 + by * 7)) * 0.24;
+        const rf = shade(race.rgb.map((c) => c * rv) as [number, number, number], 0.98);
+        const rfd = shade(race.rgb.map((c) => c * rv) as [number, number, number], 0.6);
+
+        if (sp.kind === 'house') {
+          this.drawHouse(bx, by, unit * 0.95 * jit, unit * 0.92 * jit, rf, rfd, jit > 1, true, s.race);
+          placed.push({ x: bx, y: by, w: unit * 0.95 * jit, h: unit * 0.92 * jit });
+        } else if (sp.kind === 'workshop') {
+          this.drawStruct(bx, by, unit * 1.05, unit * 0.95, {
+            race: s.race, wall: wallDim, roof: rf, roofDark: rfd,
+            roofType: s.race === 1 ? 'tree' : s.race === 2 ? 'flat' : 'gable',
+            addon: s.race === 2 ? 'chimney' : 'goods', lit: true,
+          });
+          placed.push({ x: bx, y: by, w: unit * 1.05, h: unit * 0.95 });
+        } else if (sp.kind === 'granary') {
+          this.drawStruct(bx, by, unit * 0.92, unit * 1.05, {
+            race: s.race, wall: wallLit, roof: shade([214, 178, 92], 1), roofDark: shade([170, 138, 66], 1),
+            roofType: 'dome', addon: 'goods', lit: false,
+          });
+          placed.push({ x: bx, y: by, w: unit * 0.92, h: unit * 1.05 });
+        } else if (sp.kind === 'temple') {
+          this.drawStruct(bx, by, unit * 1.1, unit * 1.3, {
+            race: s.race, wall: wallLit, roof: '#e8e2cc', roofDark: '#b8b09a',
+            roofType: s.race === 2 ? 'flat' : 'spire',
+            addon: s.race === 3 ? 'horns' : 'cross', lit: true,
+          });
+          placed.push({ x: bx, y: by, w: unit * 1.1, h: unit * 1.3 });
+        } else if (sp.kind === 'barracks') {
+          this.drawStruct(bx, by, unit * 1.15, unit * 1.0, {
+            race: s.race, wall: wallDim, roof: rfd, roofDark: shade(race.rgb, 0.42),
+            roofType: s.race === 1 ? 'tree' : s.race === 2 ? 'flat' : 'gable',
+            addon: 'shield', lit: true,
+          });
+          placed.push({ x: bx, y: by, w: unit * 1.15, h: unit * 1.0 });
+        } else {
+          this.drawStruct(bx, by, unit * 0.7, unit * 1.55, {
+            race: s.race, wall: wallLit, roof: roof, roofDark,
+            roofType: 'flat', addon: 'banner', lit: true,
+          });
+          placed.push({ x: bx, y: by, w: unit * 0.7, h: unit * 1.55 });
+        }
+      }
+
       const houseCount = placed.length;
       const innerCount = 2;
 

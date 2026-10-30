@@ -299,7 +299,10 @@ function growSettlements(world: World): void {
     }
     // 城墙（科技到 3 级后逐步修建）
     const tech = s.nation >= 0 ? world.nations[s.nation].tech : 0;
-    const wantWalls = tech >= 3 ? Math.min(4, tech - 2 + race.wallBonus) : 0;
+    // tier 2 起就该有土墙，科技越高墙越厚 —— 否则「城」看起来没有边界
+    const wantWalls = s.tier >= 2 || tech >= 3
+      ? Math.min(4, 1 + Math.max(0, tech - 3) + race.wallBonus)
+      : 0;
     if (s.walls < wantWalls && s.pop > 60) s.walls++;
 
     // 人口归零 → 城市废弃

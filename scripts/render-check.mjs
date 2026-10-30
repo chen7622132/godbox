@@ -98,9 +98,10 @@ await moodShot(2, 'angry', 'tantrum', 'mood-angry');
 const { loadImage } = await import('@napi-rs/canvas');
 const RACE_CN = ['人类', '精灵', '矮人', '兽人'];
 for (let ri = 0; ri < 4; ri++) {
-  const c = live.filter((x) => x.race === ri).sort((a, b) => b.pop - a.pop)[0];
+  const c = live.filter((x) => x.race === ri && x.walls > 0).sort((a, b) => b.pop - a.pop)[0]
+    ?? live.filter((x) => x.race === ri).sort((a, b) => b.pop - a.pop)[0];
   if (!c) continue;
-  r.cam.zoom = 20;
+  r.cam.zoom = 48;
   r.cam.x = c.x + 0.5;
   r.cam.y = c.y + 0.5;
   r.markDirty();
@@ -108,11 +109,11 @@ for (let ri = 0; ri < 4; ri++) {
   r.render(world);
   const full = await display.encode('png');
   const img = await loadImage(full);
-  const cw = 460, chh = 400;
+  const cw = 400, chh = 360;
   const c2 = createCanvas(cw, chh);
   const g = c2.getContext('2d');
   g.imageSmoothingEnabled = false;
-  g.drawImage(img, (1200 - cw) / 2 - 40, (800 - chh) / 2 - 30, cw, chh, 0, 0, cw, chh);
+  g.drawImage(img, (1200 - cw) / 2, (800 - chh) / 2 - 10, cw, chh, 0, 0, cw, chh);
   writeFileSync('/tmp/city-r' + ri + '.png', c2.toBuffer('image/png'));
   console.log('  → /tmp/city-r' + ri + '.png  (' + RACE_CN[ri] + ' ' + c.name + ')');
 }
