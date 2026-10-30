@@ -1163,6 +1163,10 @@ function killKing(world: World, n: Nation, k: Agent, cause: string, killerNation
 function conquer(world: World, a: Nation, b: Nation, target: Settlement, attackerName: string): void {
   const lost = Math.round(target.pop * 0.42);
   target.pop *= 0.58;
+  // 城破之后留下焦土：房屋大片破损，地上有烧灼痕迹
+  target.damage = 1;
+  target.status = 'cry';
+  target.statusUntil = world.tick + 300;
   target.nation = a.id;
   target.capital = false;
   target.pop = Math.max(8, target.pop);

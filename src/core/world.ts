@@ -208,9 +208,9 @@ export function generateWorld(opt: WorldGenOptions): World {
   cleanupIslands(terrain, w, h);
 
   // 开凿河流：从丘陵/山地一路流到海里
-  carveRivers(terrain, fert, w, h, rng, Math.max(16, Math.round((w * h) / 900)));
-  // 点缀湖泊：低洼处积水，让水系看起来完整
+  // 先挖湖，再挖河：这样河能穿过湖泊继续往海走，水系才连贯
   carveLakes(terrain, fert, w, h, rng, Math.max(10, Math.round((w * h) / 1600)));
+  carveRivers(terrain, fert, w, h, rng, Math.max(16, Math.round((w * h) / 900)), raw);
 
   const world: World = {
     w,
@@ -301,79 +301,98 @@ const WATER_RANK = [0, 0.5, 1, 2, 2.2, 3, 4, 4.5, 1.5, 2];
  * 开凿河流：从丘陵/山地取源点，沿最陡下降方向一路挖到海里。
  * 遇到局部最低点就积成小湖，然后停住。
  */
+/**
+ * 挖河。
+ *
+ * 之前的实现是「每步走向最低的地形」——但地形类型只有有限的几档，
+ * 同一片平原上「最低」永远指向第一个方向，于是河只会朝北直走然后撞墙。
+ *
+ * 现在的做法：先用 BFS 算出每格到海洋的距离场，再让河沿着
+ * 「距离递减」的方向走。这样它一定能走到海里，而且路径会自然弯曲。
+ */
 function carveRivers(
   terrain: Uint8Array, fert: Uint8Array,
   w: number, h: number, rng: Rng, count: number,
+  height: Float32Array,
 ): void {
-  const dirs: [number, number][] = [
-    [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1],
+  void height;
+
+  // ---- 1. 到海的距离场 ----
+  const dist = new Int32Array(w * h).fill(-1);
+  const q: number[] = [];
+  for (let i = 0; i < w * h; i++) {
+    const t = terrain[i];
+    if (t === T.Water || t === T.Deep) { dist[i] = 0; q.push(i); }
+  }
+  let head = 0;
+  while (head < q.length) {
+    const c = q[head++];
+    const x = c % w;
+    const y = (c / w) | 0;
+    const dd = dist[c] + 1;
+    const nb: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (const [dx, dy] of nb) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const j = ny * w + nx;
+      if (dist[j] !== -1) continue;
+      dist[j] = dd;
+      q.push(j);
+    }
+  }
+
+  // ---- 2. 候选源头：离海足够远的陆地 ----
+  const cands: number[] = [];
+  for (let i = 0; i < w * h; i++) {
+    if (dist[i] > 22) cands.push(i);
+  }
+  if (!cands.length) return;
+
+  const DIRS8: [number, number][] = [
+    [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1],
   ];
 
+  const usedStart = new Set<number>();
   for (let r = 0; r < count; r++) {
-    // 找源头：优先丘陵/山地，找不到就退而取森林里的"高处"
-    let sx = -1;
-    let sy = -1;
-    for (let t = 0; t < 900; t++) {
-      const x = rng.int(w);
-      const y = rng.int(h);
-      const ter = terrain[y * w + x];
-      if (ter === T.Hill || ter === T.Mountain) { sx = x; sy = y; break; }
-      if (sx < 0 && ter === T.Forest && rng.chance(0.25)) { sx = x; sy = y; }
-    }
-    if (sx < 0) continue;
+    let s0 = cands[rng.int(cands.length)];
+    for (let t = 0; t < 24 && usedStart.has(s0); t++) s0 = cands[rng.int(cands.length)];
+    usedStart.add(s0);
+    let x = s0 % w;
+    let y = (s0 / w) | 0;
+    let guard = 0;
 
-    let x = sx;
-    let y = sy;
-    let steps = 0;
-    while (steps++ < 400) {
+    while (guard++ < 3000) {
       const i = y * w + x;
-      const ter = terrain[i];
-      if (ter === T.Water || ter === T.Deep) break;
-
+      if (dist[i] <= 0) break;
       terrain[i] = T.Water;
-      fert[i] = 130;
+      fert[i] = 135;
 
-      // 河宽 2-3 格：太细的河在俯瞰下就是一条看不见的线
-      if (rng.chance(0.92)) {
+      // 河宽：顺流加宽，越往海越宽
+      const wide = dist[i] < 40 || rng.chance(0.55);
+      if (wide) {
         const side: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
         const [dx, dy] = side[rng.int(4)];
         const nx = x + dx;
         const ny = y + dy;
         if (nx > 0 && ny > 0 && nx < w - 1 && ny < h - 1) {
           const j = ny * w + nx;
-          if (terrain[j] !== T.Deep) {
-            terrain[j] = T.Water;
-            fert[j] = 150;
-          }
+          if (terrain[j] !== T.Deep) { terrain[j] = T.Water; fert[j] = 150; }
         }
       }
 
-      // 每走 3 步把河岸啃掉一点，做出宽窄变化
-      if (steps % 3 === 0) {
-        for (const [dx, dy] of dirs) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
-          const j = ny * w + nx;
-          const nt = terrain[j];
-          if (nt === T.Water || nt === T.Deep || nt === T.Snow) continue;
-          if (rng.chance(0.4)) {
-            terrain[j] = T.Water;
-            fert[j] = 150;
-          }
-        }
-      }
-
-      // 下一步：走向最低的邻居
+      // 沿距离递减方向走，加一点随机偏移让河道不笔直
       let bx = -1;
       let by = -1;
-      let bestR = 99;
-      for (const [dx, dy] of dirs) {
+      let best = 1e9;
+      for (const [dx, dy] of DIRS8) {
         const nx = x + dx;
         const ny = y + dy;
         if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
-        const rr = WATER_RANK[terrain[ny * w + nx]] ?? 2;
-        if (rr < bestR - 0.001) { bestR = rr; bx = nx; by = ny; }
+        const j = ny * w + nx;
+        if (dist[j] < 0) continue;
+        const score = dist[j] + rng.next() * 1.6; // 抖动：避免完全笔直
+        if (score < best) { best = score; bx = nx; by = ny; }
       }
       if (bx < 0) break;
       x = bx;
