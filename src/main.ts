@@ -10,6 +10,7 @@ import { Renderer } from './render/renderer';
 import { buildToolbar } from './ui/toolbar';
 import { buildHud } from './ui/hud';
 import { Chronicle } from './ui/chronicle';
+import { buildChronicle } from './core/epic';
 import { Inspector } from './ui/inspector';
 import { showGenesis, showEnding } from './ui/overlay';
 import {
@@ -349,6 +350,46 @@ chronFilterBtn?.addEventListener('click', () => {
   chronicle.setFilterImportant(onlyMajor);
   if (world) chronicle.rebuildAll(world);
   toast(onlyMajor ? '只看大事' : '显示全部事件');
+});
+
+// 史书视图：把流水账重写成纪传体章节（先立因，再写果）
+const epicBtn = document.getElementById('btn-chron-epic');
+const epicView = document.getElementById('epic-view');
+const chronList = document.getElementById('chronicle-list');
+let epicOn = false;
+epicBtn?.addEventListener('click', () => {
+  if (!world) return;
+  epicOn = !epicOn;
+  epicBtn.classList.toggle('active', epicOn);
+  if (!epicView || !chronList) return;
+  epicView.hidden = !epicOn;
+  chronList.style.display = epicOn ? 'none' : '';
+  if (!epicOn) return;
+
+  const chapters = buildChronicle(world);
+  epicView.innerHTML = '';
+  if (!chapters.length) {
+    const d = document.createElement('div');
+    d.className = 'epic-empty';
+    d.textContent = '这一年还没有值得立传的事。再等等 —— 账总要有人来收。';
+    epicView.appendChild(d);
+    return;
+  }
+  for (const c of chapters) {
+    const box = document.createElement('div');
+    box.className = 'epic-chapter';
+    const h = document.createElement('div');
+    h.className = 'epic-title';
+    h.textContent = c.title;
+    box.appendChild(h);
+    for (let i = 0; i < c.lines.length; i++) {
+      const p = document.createElement('p');
+      p.className = 'epic-line' + (i === c.lines.length - 1 ? ' em' : '');
+      p.textContent = c.lines[i];
+      box.appendChild(p);
+    }
+    epicView.appendChild(box);
+  }
 });
 
 // 拖拽导入存档
